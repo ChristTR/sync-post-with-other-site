@@ -5,7 +5,7 @@ if( !class_exists ( 'SPS_Settings' ) ) {
 
     	function __construct(){
 
-    		add_action( "sps_save_settings", array( $this, "sps_save_settings_func" ), 10 , 1 );
+    		add_action( "sps_save_settings", array( $this, "sps_save_settings_func" ), 10 , 1 );#
 
     	}
 
@@ -95,7 +95,12 @@ if( !class_exists ( 'SPS_Settings' ) ) {
             }
             return $all_types;
         }
-       
+
+    public function spsv2_get_post_types() {
+        $excluded = ['attachment', 'revision', 'nav_menu_item'];
+        return array_diff(get_post_types(['public' => true]), $excluded);
+    }
+        
     }
 
     global $sps_settings;
