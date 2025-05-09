@@ -23,6 +23,11 @@ if (!class_exists('SPSv2_Post_Meta')) {
 
         // ==================== [ MÉTODOS PRINCIPAIS ] ==================== //
 
+           private function get_supported_post_types() {
+            $excluded = ['attachment', 'revision', 'nav_menu_item'];
+            return array_diff(get_post_types(['public' => true]), $excluded);
+        }
+        
         function spsv2_register_meta_box() {
             global $spsv2_settings;
             add_meta_box(
@@ -108,10 +113,6 @@ if (!class_exists('SPSv2_Post_Meta')) {
             ]);
         }
 
-            private function get_supported_post_types() {
-        $excluded = ['attachment', 'revision', 'nav_menu_item'];
-        return array_diff(get_post_types(['public' => true]), $excluded);
-    }
        
 
         // ==================== [ INTEGRAÇÃO YOAST ] ==================== //
