@@ -26,14 +26,19 @@ if (!class_exists('SPSv2_Post_Meta')) {
         function spsv2_register_meta_box() {
             global $spsv2_settings;
             add_meta_box(
-                'spsv2_websites', 
-                __('Sites de Sincronização v2', SPSV2_txt_domain), 
-                array( $this, 'spsv2_render_meta_box' ), 
-                $spsv2_settings->spsv2_get_post_types(), 
-                'side', 
-                'default'
-            );
+    'spsv2_websites', 
+    __('Sites de Sincronização v2', 'spsv2-txt-domain'), 
+    array($this, 'spsv2_render_meta_box'), 
+    $this->get_post_types(), // Método interno corrigido
+    'side', 
+    'default'
+);
         }
+
+        private function get_post_types() {
+    $excluded = ['attachment', 'revision', 'nav_menu_item'];
+    return array_diff(get_post_types(['public' => true]), $excluded);
+}
         
         public function spsv2_render_meta_box($post) {
             global $spsv2_settings;
