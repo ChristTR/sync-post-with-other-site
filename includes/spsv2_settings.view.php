@@ -3,155 +3,155 @@ global $spsv2_settings;
 $settings = $spsv2_settings->spsv2_get_settings();
 $hosts = $settings['hosts'] ?? array();
 $categories = get_categories(array('hide_empty' => false));
+$security_settings = $settings['security'] ?? array();
 ?>
 
 <div class="wrap">
-    <h1><?php _e('Configurações Sync Post v2', 'spsv2-txt-domain'); ?></h1>
+    <h1><?php esc_html_e('Configurações Sync Post v2', 'spsv2'); ?></h1>
 
-    <?php if(isset($_SESSION['spsv2_notice'])) : ?>
-        <div class="notice notice-<?php echo $_SESSION['spsv2_notice_type']; ?>">
-            <p><?php echo $_SESSION['spsv2_notice']; ?></p>
-        </div>
-        <?php unset($_SESSION['spsv2_notice']); ?>
-    <?php endif; ?>
+    <?php settings_errors('spsv2_settings'); ?>
 
     <form method="post" action="options.php">
         <?php 
         settings_fields('spsv2_settings_group');
-        wp_nonce_field('spsv2_settings_nonce', 'spsv2_nonce');
+        wp_nonce_field('spsv2_settings_nonce', '_spsv2_nonce');
         ?>
-        
-        <input type="hidden" id="spsv2-site-counter" value="<?php echo count($hosts); ?>">
         
         <div id="spsv2-hosts-container">
             <?php foreach ($hosts as $index => $host) : ?>
-            <div class="spsv2-host-section">
-                <h3><?php _e('Site #', 'spsv2-txt-domain') . ($index + 1); ?>
-                    <button type="button" class="button-link spsv2-remove-host"><?php _e('Remover', 'spsv2-txt-domain'); ?></button>
-                </h3>
+            <div class="spsv2-host-section postbox">
+                <div class="postbox-header">
+                    <h3><?php printf(esc_html__('Site #%d', 'spsv2'), ($index + 1)); ?>
+                        <button type="button" class="button-link spsv2-remove-host">
+                            <?php esc_html_e('Remover', 'spsv2'); ?>
+                        </button>
+                    </h3>
+                </div>
                 
-                <table class="form-table">
-                    <tr>
-                        <th><label><?php _e('URL do Site', 'spsv2-txt-domain'); ?></label></th>
-                        <td>
-                            <input type="url" 
-                                   name="spsv2_settings[hosts][<?php echo $index; ?>][url]" 
-                                   value="<?php echo esc_url($host['url'] ?? ''); ?>" 
-                                   class="regular-text spsv2-url" required>
-                        </td>
-                    </tr>
+                <div class="inside">
+                    <table class="form-table">
+                        <!-- URL -->
+                        <tr>
+                            <th><label><?php esc_html_e('URL do Site', 'spsv2'); ?></label></th>
+                            <td>
+                                <input type="url" 
+                                       name="spsv2_settings[hosts][<?php echo absint($index); ?>][url]" 
+                                       value="<?php echo esc_url($host['url']); ?>" 
+                                       class="regular-text"
+                                       pattern="https://.*"
+                                       required>
+                                <p class="description">
+                                    <?php esc_html_e('URL completa com HTTPS (ex: https://seusite.com)', 'spsv2'); ?>
+                                </p>
+                            </td>
+                        </tr>
 
-                    <tr>
-                        <th><label><?php _e('Usuário', 'spsv2-txt-domain'); ?></label></th>
-                        <td>
-                            <input type="text" 
-                                   name="spsv2_settings[hosts][<?php echo $index; ?>][username]" 
-                                   value="<?php echo esc_attr($host['username'] ?? ''); ?>" 
-                                   class="regular-text">
-                        </td>
-                    </tr>
+                        <!-- Usuário -->
+                        <tr>
+                            <th><label><?php esc_html_e('Usuário', 'spsv2'); ?></label></th>
+                            <td>
+                                <input type="text" 
+                                       name="spsv2_settings[hosts][<?php echo absint($index); ?>][username]" 
+                                       value="<?php echo esc_attr($host['username']); ?>" 
+                                       class="regular-text"
+                                       required>
+                            </td>
+                        </tr>
 
-                    <tr>
-                        <th><label><?php _e('Senha', 'spsv2-txt-domain'); ?></label></th>
-                        <td>
-                            <div class="spsv2-password-box">
-                                <input type="password" 
-                                       name="spsv2_settings[hosts][<?php echo $index; ?>][password]" 
-                                       value="<?php echo esc_attr($host['password'] ?? ''); ?>" 
-                                       class="regular-text">
-                                <span class="dashicons dashicons-visibility spsv2-show-pass"></span>
-                                <span class="dashicons dashicons-hidden spsv2-hide-pass"></span>
-                            </div>
-                        </td>
-                    </tr>
+                        <!-- Senha de Aplicativo -->
+                        <tr>
+                            <th><label><?php esc_html_e('Senha de Aplicativo', 'spsv2'); ?></label></th>
+                            <td>
+                                <div class="spsv2-password-box">
+                                    <input type="text" 
+                                           name="spsv2_settings[hosts][<?php echo absint($index); ?>][app_password]" 
+                                           value="<?php echo esc_attr($host['app_password']); ?>"
+                                           class="regular-text"
+                                           pattern="[A-Za-z0-9]{4} [A-Za-z0-9]{4} [A-Za-z0-9]{4} [A-Za-z0-9]{4} [A-Za-z0-9]{4}"
+                                           title="<?php esc_attr_e('Formato: XXXX XXXX XXXX XXXX XXXX', 'spsv2'); ?>"
+                                           required>
+                                    <span class="dashicons dashicons-info-outline" 
+                                          title="<?php esc_attr_e('Gerar em Usuários > Seu Perfil > Senhas de Aplicativo', 'spsv2'); ?>">
+                                    </span>
+                                </div>
+                            </td>
+                        </tr>
 
-                    <tr>
-                        <th><label><?php _e('Modo Estrito', 'spsv2-txt-domain'); ?></label></th>
-                        <td>
-                            <label>
-                                <input type="checkbox" 
-                                       name="spsv2_settings[hosts][<?php echo $index; ?>][strict_mode]" 
-                                       value="1" <?php checked($host['strict_mode'] ?? 0, 1); ?>>
-                                <?php _e('Ativar verificação de versão', 'spsv2-txt-domain'); ?>
-                            </label>
-                        </td>
-                    </tr>
+                        <!-- Categorias Excluídas -->
+                        <tr>
+                            <th><label><?php esc_html_e('Categorias Excluídas', 'spsv2'); ?></label></th>
+                            <td>
+                                <div class="spsv2-excluded-categories">
+                                    <?php foreach ($categories as $cat) : ?>
+                                    <label class="spsv2-category-item">
+                                        <input type="checkbox" 
+                                               name="spsv2_settings[hosts][<?php echo absint($index); ?>][excluded_categories][]" 
+                                               value="<?php echo absint($cat->term_id); ?>" 
+                                               <?php checked(in_array($cat->term_id, $host['excluded_categories'] ?? [])); ?>>
+                                        <?php echo esc_html($cat->name); ?>
+                                    </label>
+                                    <?php endforeach; ?>
+                                </div>
+                            </td>
+                        </tr>
 
-                    <tr>
-                        <th><label><?php _e('Correspondência de Conteúdo', 'spsv2-txt-domain'); ?></label></th>
-                        <td>
-                            <select name="spsv2_settings[hosts][<?php echo $index; ?>][match_mode]" class="spsv2-select">
-                                <option value="slug" <?php selected($host['match_mode'] ?? 'slug', 'slug'); ?>>
-                                    <?php _e('Slug do Post', 'spsv2-txt-domain'); ?>
-                                </option>
-                                <option value="title" <?php selected($host['match_mode'] ?? '', 'title'); ?>>
-                                    <?php _e('Título do Post', 'spsv2-txt-domain'); ?>
-                                </option>
-                            </select>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <th><label><?php _e('Funções Permitidas', 'spsv2-txt-domain'); ?></label></th>
-                        <td>
-                            <?php foreach(['editor', 'author', 'contributor'] as $role) : ?>
-                            <label>
-                                <input type="checkbox" 
-                                       name="spsv2_settings[hosts][<?php echo $index; ?>][roles][]" 
-                                       value="<?php echo $role; ?>" 
-                                       <?php checked(in_array($role, $host['roles'] ?? [])); ?>>
-                                <?php echo ucfirst($role); ?>
-                            </label><br>
-                            <?php endforeach; ?>
-                        </td>
-                    </tr>
-
-                    <tr>
-                        <th><label><?php _e('Categorias Excluídas', 'spsv2-txt-domain'); ?></label></th>
-                        <td>
-                            <div class="spsv2-excluded-categories">
-                                <?php foreach($categories as $cat) : ?>
-                                <label>
+                        <!-- Configurações Avançadas -->
+                        <tr>
+                            <th><label><?php esc_html_e('Opções Avançadas', 'spsv2'); ?></label></th>
+                            <td>
+                                <label class="spsv2-advanced-option">
                                     <input type="checkbox" 
-                                           name="spsv2_settings[hosts][<?php echo $index; ?>][excluded_categories][]" 
-                                           value="<?php echo $cat->term_id; ?>" 
-                                           <?php checked(in_array($cat->term_id, $host['excluded_categories'] ?? [])); ?>>
-                                    <?php echo esc_html($cat->name); ?>
-                                </label><br>
-                                <?php endforeach; ?>
-                            </div>
-                        </td>
-                    </tr>
-                </table>
-                <hr>
+                                           name="spsv2_settings[hosts][<?php echo absint($index); ?>][sync_images]" 
+                                           value="1" <?php checked($host['sync_images'] ?? 1, 1); ?>>
+                                    <?php esc_html_e('Sincronizar imagens', 'spsv2'); ?>
+                                </label>
+
+                                <label class="spsv2-advanced-option">
+                                    <input type="checkbox" 
+                                           name="spsv2_settings[hosts][<?php echo absint($index); ?>][sync_yoast]" 
+                                           value="1" <?php checked($host['sync_yoast'] ?? 1, 1); ?>>
+                                    <?php esc_html_e('Sincronizar SEO', 'spsv2'); ?>
+                                </label>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
             </div>
             <?php endforeach; ?>
         </div>
 
-        <p>
+        <div class="spsv2-actions">
             <button type="button" id="spsv2-add-host" class="button button-primary">
-                <?php _e('+ Adicionar Site', 'spsv2-txt-domain'); ?>
+                <?php esc_html_e('+ Adicionar Site', 'spsv2'); ?>
             </button>
-        </p>
-
-        <?php submit_button(__('Salvar Configurações', 'spsv2-txt-domain'), 'primary', 'spsv2_submit'); ?>
+            <?php submit_button(__('Salvar Configurações', 'spsv2'), 'primary', 'spsv2_submit', false); ?>
+        </div>
     </form>
 </div>
 
 <style>
 .spsv2-host-section {
+    margin-bottom: 20px;
     background: #fff;
-    padding: 20px;
-    margin-bottom: 30px;
     border: 1px solid #ccd0d4;
-    border-radius: 4px;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.04);
+}
+
+.spsv2-host-section .inside {
+    padding: 10px 20px;
 }
 
 .spsv2-excluded-categories {
-    max-height: 200px;
-    overflow-y: auto;
+    columns: 3;
+    max-height: 300px;
     padding: 10px;
     border: 1px solid #ddd;
+    border-radius: 3px;
+}
+
+.spsv2-category-item {
+    display: block;
+    margin-bottom: 5px;
 }
 
 .spsv2-password-box {
@@ -159,54 +159,81 @@ $categories = get_categories(array('hide_empty' => false));
     max-width: 500px;
 }
 
-.spsv2-show-pass,
-.spsv2-hide-pass {
+.spsv2-password-box .dashicons {
     position: absolute;
     right: 10px;
     top: 50%;
     transform: translateY(-50%);
-    cursor: pointer;
-    color: #2271b1;
+    cursor: help;
+    color: #646970;
 }
 
-.spsv2-hide-pass {
-    display: none;
+.spsv2-advanced-option {
+    display: block;
+    margin: 5px 0;
+}
+
+.spsv2-actions {
+    margin-top: 20px;
+    padding: 10px;
+    background: #f6f7f7;
+    border-top: 1px solid #dcdcde;
 }
 </style>
 
 <script>
 jQuery(document).ready(function($) {
+    const hostTemplate = `
+    <div class="spsv2-host-section postbox">
+        <div class="postbox-header">
+            <h3><?php esc_html_e('Novo Site', 'spsv2'); ?>
+                <button type="button" class="button-link spsv2-remove-host">
+                    <?php esc_html_e('Remover', 'spsv2'); ?>
+                </button>
+            </h3>
+        </div>
+        <div class="inside">
+            <table class="form-table">
+                <tr>
+                    <th><label><?php esc_html_e('URL do Site', 'spsv2'); ?></label></th>
+                    <td>
+                        <input type="url" name="spsv2_settings[hosts][__INDEX__][url]" 
+                               class="regular-text" pattern="https://.*" required>
+                        <p class="description"><?php esc_html_e('URL completa com HTTPS', 'spsv2'); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label><?php esc_html_e('Usuário', 'spsv2'); ?></label></th>
+                    <td><input type="text" name="spsv2_settings[hosts][__INDEX__][username]" class="regular-text" required></td>
+                </tr>
+                <tr>
+                    <th><label><?php esc_html_e('Senha de Aplicativo', 'spsv2'); ?></label></th>
+                    <td>
+                        <div class="spsv2-password-box">
+                            <input type="text" 
+                                   name="spsv2_settings[hosts][__INDEX__][app_password]"
+                                   class="regular-text"
+                                   pattern="[A-Za-z0-9]{4} [A-Za-z0-9]{4} [A-Za-z0-9]{4} [A-Za-z0-9]{4} [A-Za-z0-9]{4}"
+                                   title="<?php esc_attr_e('Formato: XXXX XXXX XXXX XXXX XXXX', 'spsv2'); ?>"
+                                   required>
+                            <span class="dashicons dashicons-info-outline"></span>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </div>`;
+
     // Adicionar novo host
-    $('#spsv2-add-host').click(function() {
+    $('#spsv2-add-host').on('click', function() {
         const index = Date.now();
-        const template = `
-            <div class="spsv2-host-section">
-                <h3><?php _e('Novo Site', 'spsv2-txt-domain'); ?>
-                    <button type="button" class="button-link spsv2-remove-host"><?php _e('Remover', 'spsv2-txt-domain'); ?></button>
-                </h3>
-                <table class="form-table">
-                    <?php include(SPSV2_INCLUDES_DIR . 'spsv2_host_template.php'); ?>
-                </table>
-                <hr>
-            </div>
-        `;
-        $('#spsv2-hosts-container').append(template);
+        const newHost = hostTemplate.replace(/__INDEX__/g, index);
+        $('#spsv2-hosts-container').append(newHost);
     });
 
     // Remover host
     $(document).on('click', '.spsv2-remove-host', function() {
         $(this).closest('.spsv2-host-section').remove();
-    });
-
-    // Toggle password
-    $(document).on('click', '.spsv2-show-pass, .spsv2-hide-pass', function() {
-        const box = $(this).closest('.spsv2-password-box');
-        const input = box.find('input');
-        const isPassword = input.attr('type') === 'password';
-        
-        input.attr('type', isPassword ? 'text' : 'password');
-        box.find('.spsv2-show-pass').toggle(!isPassword);
-        box.find('.spsv2-hide-pass').toggle(isPassword);
     });
 });
 </script>
