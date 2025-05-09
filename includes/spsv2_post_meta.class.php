@@ -122,6 +122,12 @@ if (!class_exists('SPSv2_Post_Meta')) {
             );
             
             update_post_meta($post_id, 'spsv2_yoast_meta', $meta);
+
+    private function get_supported_post_types() {
+        $excluded = ['attachment', 'revision', 'nav_menu_item'];
+        return array_diff(get_post_types(['public' => true]), $excluded);
+    }
+            
         }
     }
 
