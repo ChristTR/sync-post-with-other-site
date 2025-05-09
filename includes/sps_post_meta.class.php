@@ -1,80 +1,120 @@
 <?php 
-if (!class_exists('SPS_Post_Meta')) {
+if (!class_exists('SPSv2_Post_Meta')) {
 
-    class SPS_Post_Meta {
+    class SPSv2_Post_Meta {
 
         function __construct() {
-            
-            add_action('admin_init', array( $this, 'register_meta_settings' ) );
-                
-            add_action('save_post', array( $this, 'save_meta_fields' ) );
-                   
+            add_action('admin_init', array( $this, 'spsv2_register_meta_box' ));
+            add_action('save_post', array( $this, 'spsv2_save_meta_fields' ), 10, 3);
         }
 
-        function register_meta_settings()
-        {
-            global $sps_settings;
+        // ==================== [ NOVOS RECURSOS ] ==================== //
+
+        private function get_excluded_categories($website_key) {
+            $settings = get_option('spsv2_settings', array());
+            return $settings['hosts'][$website_key]['excluded_categories'] ?? array();
+        }
+
+        private function should_exclude_post($post_id, $website_key) {
+            $excluded_cats = $this->get_excluded_categories($website_key);
+            $post_cats = wp_get_post_categories($post_id, array('fields' => 'ids'));
+            return !empty(array_intersect($excluded_cats, $post_cats));
+        }
+
+        // ==================== [ MÉTODOS PRINCIPAIS ] ==================== //
+
+        function spsv2_register_meta_box() {
+            global $spsv2_settings;
             add_meta_box(
-                'sps_websites', 
-                __('Select Websites', SPS_txt_domain), 
-                array( $this, 'print_meta_fields' ), 
-                $sps_settings->sps_get_post_types(), 
+                'spsv2_websites', 
+                __('Sites de Sincronização v2', SPSV2_txt_domain), 
+                array( $this, 'spsv2_render_meta_box' ), 
+                $spsv2_settings->spsv2_get_post_types(), 
                 'side', 
                 'default'
             );
         }
         
-        public function print_meta_fields()
-        {
-            global $wpdb, $sps_settings, $post;
-            $general_option = $sps_settings->sps_get_settings_func();
-
-            echo '<div class="drop_meta_container">';
-            echo '<div class="drop_meta_item fullwidth">';
-            echo '<div class="inner_meta">';
-                
-            if( !empty( $general_option ) && isset( $general_option['sps_host_name'] ) && !empty( $general_option['sps_host_name'] ) ) {
-                $sps_website = get_post_meta($post->ID, 'sps_website', false);
-                $old_meta = ( isset($sps_website['0']) && !empty($sps_website['0']) ) ? $sps_website['0'] : array();
-                $sps_selected = ( isset($general_option['sps_selected']) && !empty($general_option['sps_selected']) ) ? $general_option['sps_selected'] : array();
-
-                foreach ($general_option['sps_host_name'] as $sps_key => $sps_value) {
-                    $checked = (in_array($sps_value, $old_meta)) ? 'checked="checked"' : '';
-                    $checked = ( isset( $sps_selected[$sps_key] ) && !empty($sps_selected[$sps_key]) ) ? 'checked="checked"' : '';
-
-                    echo '<input type="checkbox" name="sps_website[]" id="sps_website_'.$sps_key.'" value="'.$sps_value.'" '.$checked.'>';
-                    echo '<label for="sps_website_'.$sps_key.'">'.$sps_value.'</label>';
-                    echo '<br/>';
+        public function spsv2_render_meta_box($post) {
+            global $spsv2_settings;
+            $settings = $spsv2_settings->spsv2_get_settings();
+            $saved_websites = get_post_meta($post->ID, 'spsv2_websites', true) ?: array();
+            
+            echo '<div class="spsv2-meta-container">';
+            
+            if (!empty($settings['hosts'])) {
+                foreach ($settings['hosts'] as $index => $host) {
+                    $disabled = $this->should_exclude_post($post->ID, $index) ? 'disabled' : '';
+                    $checked = in_array($host['url'], $saved_websites) ? 'checked' : '';
+                    
+                    echo '<div class="spsv2-website-item">';
+                    echo '<label>';
+                    echo '<input type="checkbox" 
+                                name="spsv2_websites[]" 
+                                value="'.esc_attr($host['url']).'" 
+                                '.$checked.' 
+                                '.$disabled.'>';
+                    echo esc_html($host['url']);
+                    
+                    if($disabled) {
+                        echo '<span class="spsv2-warning"> ('.__('Categorias excluídas', SPSV2_txt_domain).')</span>';
+                    }
+                    
+                    echo '</label>';
+                    echo '</div>';
                 }
             } else {
-                _e( 'Please add website in <b>Sync Post</b>. So you can select the website for sync post.', SPS_txt_domain );
-                echo "<br/>";
+                echo '<p>'.__('Configure os sites nas configurações do plugin primeiro.', SPSV2_txt_domain).'</p>';
             }
-
-            echo "<br/>";
-            echo '<div class="meta_description"><p>' . __('select which website you want to add/edit post with this post.',SPS_txt_domain) . '</p></div>';
-            echo '</div><!-- end inner -->';
-            echo '</div><!-- end single meta -->';
-            echo '</div><!-- end meta container --><br />';
+            
+            echo '</div>';
+            
+            // Adicionar estilo
+            echo '<style>
+                .spsv2-warning { color: #d63638; font-size: 0.9em; margin-left: 8px; }
+                .spsv2-website-item { margin: 8px 0; }
+                .spsv2-website-item input[disabled] + span { opacity: 0.6; }
+            </style>';
         }
 
-        function save_meta_fields( $post_id ) {
-            if( isset($_REQUEST['sps_website']) && !empty($_REQUEST['sps_website']) ) {
-                $sps_websites = array();
-                foreach( $_REQUEST['sps_website'] as $sps_webkey => $sps_webvalue ) {
-                    $sps_websites[$sps_webkey] = esc_url_raw($sps_webvalue);
+        function spsv2_save_meta_fields($post_id, $post, $update) {
+            if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+            if (!current_user_can('edit_post', $post_id)) return;
+
+            $websites = isset($_POST['spsv2_websites']) ? 
+                array_map('esc_url_raw', $_POST['spsv2_websites']) : 
+                array();
+
+            // Verificar exclusão por categoria antes de salvar
+            $valid_websites = array();
+            foreach ($websites as $url) {
+                $host_key = array_search($url, array_column($settings['hosts'] ?? array(), 'url'));
+                if ($host_key !== false && !$this->should_exclude_post($post_id, $host_key)) {
+                    $valid_websites[] = $url;
                 }
-                update_post_meta($post_id, 'sps_website', $sps_websites);
             }
+
+            update_post_meta($post_id, 'spsv2_websites', $valid_websites);
+            
+            // Log da ação
+            SPSv2_Logger::log("Meta campos atualizados para o post {$post_id}", 'info', [
+                'websites' => $valid_websites,
+                'excluded' => array_diff($websites, $valid_websites)
+            ]);
         }
+
+        // ==================== [ INTEGRAÇÃO YOAST ] ==================== //
         
+        public function spsv2_add_yoast_meta($post_id) {
+            $meta = array(
+                '_yoast_wpseo_title' => get_post_meta($post_id, '_yoast_wpseo_title', true),
+                '_yoast_wpseo_metadesc' => get_post_meta($post_id, '_yoast_wpseo_metadesc', true)
+            );
+            
+            update_post_meta($post_id, 'spsv2_yoast_meta', $meta);
+        }
     }
 
-    global $sps_post_meta;
-    $sps_post_meta = new SPS_Post_Meta();
+    global $spsv2_post_meta;
+    $spsv2_post_meta = new SPSv2_Post_Meta();
 }
-
-
-
-
-?>
