@@ -1,7 +1,7 @@
 <?php 
-if (!class_exists('SPS_Post_Meta')) {
+if (!class_exists('spsv2_Post_Meta')) {
 
-    class SPS_Post_Meta {
+    class spsv2_Post_Meta {
 
         function __construct() {
             
@@ -66,11 +66,16 @@ add_meta_box(
                 update_post_meta($post_id, 'sps_website', $sps_websites);
             }
         }
+
+             private function get_supported_post_types() {
+        $excluded = ['attachment', 'revision', 'nav_menu_item'];
+        return array_diff(get_post_types(['public' => true]), $excluded);
+    }
         
     }
 
-    global $sps_post_meta;
-    $sps_post_meta = new SPS_Post_Meta();
+    global $spsv2_Post_Meta;
+    $spsv2_Post_Meta = new spsv2_Post_Meta();
 }
 
 
