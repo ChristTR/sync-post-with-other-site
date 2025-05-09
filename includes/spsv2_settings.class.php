@@ -178,6 +178,14 @@ if (!class_exists('SPSv2_Settings')) {
         }
     }
 
+    // Dentro da classe SPSv2_Settings
+public function spsv2_get_post_types() {
+    $builtin_exclude = ['attachment', 'revision', 'nav_menu_item', 'custom_css', 'customize_changeset'];
+    $post_types = get_post_types(['public' => true], 'names');
+    
+    return array_diff($post_types, $builtin_exclude);
+}
+
     global $spsv2_settings;
     $spsv2_settings = new SPSv2_Settings();
 }
