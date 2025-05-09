@@ -21,6 +21,11 @@ if (!class_exists('SPSv2_Post_Meta')) {
             return !empty(array_intersect($excluded_cats, $post_cats));
         }
 
+        private function get_post_types() {
+    $excluded = ['attachment', 'revision', 'nav_menu_item'];
+    return array_diff(get_post_types(['public' => true]), $excluded);
+}
+
         // ==================== [ MÉTODOS PRINCIPAIS ] ==================== //
 
         function spsv2_register_meta_box() {
