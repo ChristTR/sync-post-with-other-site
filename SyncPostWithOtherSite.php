@@ -113,6 +113,8 @@ class SyncPostWithOtherSiteV2 {
         require_once(SPSV2_INCLUDES_DIR . 'spsv2_post_meta.class.php');
         require_once(SPSV2_INCLUDES_DIR . 'spsv2_logger.class.php');
 
+        
+
         // Ordem CRÍTICA de inicialização
         global $spsv2_settings;
         $spsv2_settings = new SPSv2_Settings();
