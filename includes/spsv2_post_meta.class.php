@@ -4,11 +4,15 @@ if (!class_exists('SPSv2_Post_Meta')) {
     class SPSv2_Post_Meta {
 
         function __construct() {
-            add_action('admin_init', array( $this, 'spsv2_register_meta_box' ));
-            add_action('save_post', array( $this, 'spsv2_save_meta_fields' ), 10, 3);
+            add_action('admin_init', array($this, 'spsv2_register_meta_box'));
+            add_action('save_post', array($this, 'spsv2_save_meta_fields'), 10, 3);
         }
 
-        // ==================== [ NOVOS RECURSOS ] ==================== //
+        // ==================== [ MÉTODOS AUXILIARES ] ==================== //
+        private function get_supported_post_types() {
+            $excluded = ['attachment', 'revision', 'nav_menu_item'];
+            return array_diff(get_post_types(['public' => true]), $excluded);
+        }
 
         private function get_excluded_categories($website_key) {
             $settings = get_option('spsv2_settings', array());
@@ -22,29 +26,17 @@ if (!class_exists('SPSv2_Post_Meta')) {
         }
 
         // ==================== [ MÉTODOS PRINCIPAIS ] ==================== //
-
-           private function get_supported_post_types() {
-            $excluded = ['attachment', 'revision', 'nav_menu_item'];
-            return array_diff(get_post_types(['public' => true]), $excluded);
-        }
-        
         function spsv2_register_meta_box() {
-            global $spsv2_settings;
             add_meta_box(
-    'spsv2_websites', 
-    __('Sites de Sincronização v2', 'spsv2-txt-domain'), 
-    array($this, 'spsv2_render_meta_box'), 
-    $this->get_post_types(), // Método interno corrigido
-    'side', 
-    'default'
-);
+                'spsv2_websites', 
+                __('Sites de Sincronização v2', SPSV2_txt_domain), 
+                array($this, 'spsv2_render_meta_box'), 
+                $this->get_supported_post_types(), // Método corrigido
+                'side', 
+                'default'
+            );
         }
 
-        private function get_post_types() {
-    $excluded = ['attachment', 'revision', 'nav_menu_item'];
-    return array_diff(get_post_types(['public' => true]), $excluded);
-}
-        
         public function spsv2_render_meta_box($post) {
             global $spsv2_settings;
             $settings = $spsv2_settings->spsv2_get_settings();
@@ -79,7 +71,6 @@ if (!class_exists('SPSv2_Post_Meta')) {
             
             echo '</div>';
             
-            // Adicionar estilo
             echo '<style>
                 .spsv2-warning { color: #d63638; font-size: 0.9em; margin-left: 8px; }
                 .spsv2-website-item { margin: 8px 0; }
@@ -91,14 +82,15 @@ if (!class_exists('SPSv2_Post_Meta')) {
             if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
             if (!current_user_can('edit_post', $post_id)) return;
 
+            global $spsv2_settings;
+            $settings = $spsv2_settings->spsv2_get_settings();
             $websites = isset($_POST['spsv2_websites']) ? 
                 array_map('esc_url_raw', $_POST['spsv2_websites']) : 
                 array();
 
-            // Verificar exclusão por categoria antes de salvar
             $valid_websites = array();
             foreach ($websites as $url) {
-                $host_key = array_search($url, array_column($settings['hosts'] ?? array(), 'url'));
+                $host_key = array_search($url, array_column($settings['hosts'], 'url'));
                 if ($host_key !== false && !$this->should_exclude_post($post_id, $host_key)) {
                     $valid_websites[] = $url;
                 }
@@ -106,25 +98,26 @@ if (!class_exists('SPSv2_Post_Meta')) {
 
             update_post_meta($post_id, 'spsv2_websites', $valid_websites);
             
-            // Log da ação
-            SPSv2_Logger::log("Meta campos atualizados para o post {$post_id}", 'info', [
-                'websites' => $valid_websites,
-                'excluded' => array_diff($websites, $valid_websites)
-            ]);
+            SPSv2_Logger::log(
+                "Meta campos atualizados para o post {$post_id}",
+                'info',
+                [
+                    'websites' => $valid_websites,
+                    'excluded' => array_diff($websites, $valid_websites)
+                ]
+            );
         }
 
-       
-
         // ==================== [ INTEGRAÇÃO YOAST ] ==================== //
-        
         public function spsv2_add_yoast_meta($post_id) {
-            $meta = array(
-                '_yoast_wpseo_title' => get_post_meta($post_id, '_yoast_wpseo_title', true),
-                '_yoast_wpseo_metadesc' => get_post_meta($post_id, '_yoast_wpseo_metadesc', true)
+            update_post_meta(
+                $post_id,
+                'spsv2_yoast_meta',
+                [
+                    '_yoast_wpseo_title' => get_post_meta($post_id, '_yoast_wpseo_title', true),
+                    '_yoast_wpseo_metadesc' => get_post_meta($post_id, '_yoast_wpseo_metadesc', true)
+                ]
             );
-            
-            update_post_meta($post_id, 'spsv2_yoast_meta', $meta);
-     
         }
     }
 
