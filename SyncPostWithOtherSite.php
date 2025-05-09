@@ -2,129 +2,177 @@
 /*
 Plugin Name: Sync Post With Other Site v2
 Plugin URI: https://kp4coder.com/
-Description: Versão 2 - Sincronização de posts com múltiplos sites + recursos aprimorados
-Version: 2.0.1
+Description: Versão 2 - Sincronização segura de posts entre sites WordPress via REST API
+Version: 2.0.2
 Author: kp4coder
 Author URI: https://kp4coder.com/
-Domain Path: /languages
-Text Domain: spsv2_text_domain
-License: GPL2 or later 
+Text Domain: spsv2
+License: GPLv2 or later
 */
 
-if (!defined('ABSPATH')) exit;
+defined('ABSPATH') || exit;
 
-// =================== DEFINIÇÕES DA VERSÃO 2 =================== //
-define('SPSV2_PLUGIN', '/sync-post-with-other-site-v2/');
+// =================== CONSTANTES DO PLUGIN =================== //
+define('SPSV2_VERSION', '2.0.2');
 define('SPSV2_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SPSV2_INCLUDES_DIR', SPSV2_PLUGIN_DIR . 'includes/');
-define('SPSV2_ASSETS_DIR', SPSV2_PLUGIN_DIR . 'assets/');
-define('SPSV2_txt_domain', 'spsv2_text_domain');
+define('SPSV2_BASENAME', plugin_basename(__FILE__));
 
 class SyncPostWithOtherSiteV2 {
 
-    var $spsv2_setting = 'spsv2_settings';
+    private $settings;
     
-    function __construct() {
-        register_activation_hook(__FILE__, array(&$this, 'spsv2_install'));
-        register_deactivation_hook(__FILE__, array(&$this, 'spsv2_deactivation'));
-        add_action('admin_menu', array($this, 'spsv2_add_menu'));
-        add_action('admin_enqueue_scripts', array($this, 'spsv2_enqueue_scripts'));
-        add_action('plugins_loaded', array($this, 'spsv2_load_textdomain'));
+    public function __construct() {
+        // Registra hooks de ativação/desativação
+        register_activation_hook(__FILE__, [$this, 'activate']);
+        register_deactivation_hook(__FILE__, [$this, 'deactivate']);
         
-        // Inicializar componentes principais
-        $this->spsv2_initialize_modules();
+        // Inicializa funcionalidades
+        add_action('plugins_loaded', [$this, 'init_plugin']);
+        add_action('admin_init', [$this, 'check_ssl']);
     }
 
-    // =================== MÉTODOS PRINCIPAIS =================== //
+    // =================== ATIVAÇÃO/DESATIVAÇÃO =================== //
     
-    function spsv2_load_textdomain() {
+    public function activate() {
+        if (!current_user_can('activate_plugins')) {
+            return;
+        }
+        
+        // Cria opções iniciais
+        add_option('spsv2_settings', [
+            'hosts' => [],
+            'security' => [
+                'force_ssl' => true,
+                'min_tls' => '1.2'
+            ]
+        ]);
+        
+        // Agenda limpeza de logs
+        if (!wp_next_scheduled('spsv2_daily_cleanup')) {
+            wp_schedule_event(time(), 'daily', 'spsv2_daily_cleanup');
+        }
+    }
+
+    public function deactivate() {
+        if (!current_user_can('activate_plugins')) {
+            return;
+        }
+        
+        // Remove agendamentos
+        wp_clear_scheduled_hook('spsv2_daily_cleanup');
+    }
+
+    // =================== INICIALIZAÇÃO PRINCIPAL =================== //
+    
+    public function init_plugin() {
+        // Carrega traduções
         load_plugin_textdomain(
-            SPSV2_txt_domain,
+            'spsv2',
             false,
-            dirname(plugin_basename(__FILE__)) . '/languages'
+            dirname(SPSV2_BASENAME) . '/languages/'
         );
+
+        // Carrega dependências
+        require_once(SPSV2_INCLUDES_DIR . 'spsv2_settings.class.php');
+        require_once(SPSV2_INCLUDES_DIR . 'spsv2_sync.class.php');
+        require_once(SPSV2_INCLUDES_DIR . 'spsv2_logger.class.php');
+        require_once(SPSV2_INCLUDES_DIR . 'spsv2_post_meta.class.php');
+
+        // Inicializa módulos
+        $this->settings = new SPSv2_Settings();
+        new SPSv2_Sync();
+        new SPSv2_Post_Meta();
+        SPSv2_Logger::get_instance();
+
+        // Registra hooks
+        $this->register_admin_hooks();
+        $this->register_security_hooks();
     }
 
-    static function spsv2_install() {
-        update_option("spsv2_plugin", true);
-        update_option("spsv2_version", '2.0.1');
+    // =================== SEGURANÇA =================== //
+    
+    public function check_ssl() {
+        $settings = get_option('spsv2_settings');
         
-        // Criar opções iniciais se necessário
-        if (!get_option('spsv2_settings')) {
-            update_option('spsv2_settings', array(
-                'hosts' => array(),
-                'version' => '2.0.1'
-            ));
+        if ($settings['security']['force_ssl'] && !is_ssl()) {
+            add_action('admin_notices', function() {
+                echo '<div class="notice notice-error"><p>';
+                _e('O Sync Post v2 requer conexão HTTPS para funcionar com segurança!', 'spsv2');
+                echo '</p></div>';
+            });
         }
     }
 
-    static function spsv2_deactivation() {
-        // Limpar agendamentos ou transientes se necessário
+    private function register_security_hooks() {
+        add_filter('https_ssl_verify', '__return_true');
+        add_filter('https_local_ssl_verify', '__return_true');
+        
+        // Força TLS 1.2+
+        add_action('http_api_curl', function($handle) {
+            curl_setopt($handle, CURLOPT_SSLVERSION, 6); // CURL_SSLVERSION_TLSv1_2
+            curl_setopt($handle, CURLOPT_SSL_CIPHER_LIST, 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256');
+        });
     }
 
-    function spsv2_add_menu() {
+    // =================== ADMIN =================== //
+    
+    private function register_admin_hooks() {
+        add_action('admin_menu', [$this, 'add_admin_menu']);
+        add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_assets']);
+    }
+
+    public function add_admin_menu() {
         add_menu_page(
-            __('Sync Post v2', SPSV2_txt_domain),
-            __('Sync Post v2', SPSV2_txt_domain),
+            __('Sync Post v2', 'spsv2'),
+            __('Sync Post v2', 'spsv2'),
             'manage_options',
-            $this->spsv2_setting,
-            array(&$this, 'spsv2_route'),
-            'dashicons-update-alt',
-            11
+            'spsv2-settings',
+            [$this->settings, 'render_settings_page'],
+            'dashicons-rest-api',
+            80
         );
     }
 
-    function spsv2_enqueue_scripts() {
-        if ($this->spsv2_is_admin_page()) {
-            wp_enqueue_style(
-                'spsv2_admin_style',
-                plugins_url('assets/css/spsv2_admin_style.css', __FILE__),
-                array(),
-                '2.0.1'
-            );
-            
-            wp_enqueue_script(
-                'spsv2_admin_js',
-                plugins_url('assets/js/spsv2_admin_js.js', __FILE__),
-                array('jquery'),
-                '2.0.1',
-                true
-            );
+    public function enqueue_admin_assets($hook) {
+        if (strpos($hook, 'spsv2-settings') === false) {
+            return;
         }
-    }
 
-    // =================== MÉTODOS AUXILIARES =================== //
-    
-    function spsv2_is_admin_page() {
-        return isset($_GET['page']) && $_GET['page'] === $this->spsv2_setting;
-    }
+        wp_enqueue_style(
+            'spsv2-admin-css',
+            plugins_url('assets/css/admin.css', __FILE__),
+            [],
+            SPSV2_VERSION
+        );
 
-    function spsv2_route() {
-        if (file_exists(SPSV2_INCLUDES_DIR . 'spsv2_settings.class.php')) {
-            global $spsv2_settings;
-            $spsv2_settings = new SPSv2_Settings();
-            $spsv2_settings->spsv2_display_settings();
-        }
-    }
+        wp_enqueue_script(
+            'spsv2-admin-js',
+            plugins_url('assets/js/admin.js', __FILE__),
+            ['jquery', 'wp-i18n'],
+            SPSV2_VERSION,
+            true
+        );
 
-private function spsv2_initialize_modules() {
-    // dependências
-    require_once(SPSV2_INCLUDES_DIR . 'spsv2_settings.class.php');
-    require_once(SPSV2_INCLUDES_DIR . 'spsv2_logger.class.php');
-    
-    //  Settings ANTES de outros módulos
-    global $spsv2_settings;
-    $spsv2_settings = new SPSv2_Settings();
-    
-    //  demais classes
-    require_once(SPSV2_INCLUDES_DIR . 'spsv2_sync.class.php');
-    require_once(SPSV2_INCLUDES_DIR . 'spsv2_post_meta.class.php');
-    
-    new SPSv2_Sync();
-    new SPSv2_Post_Meta();
-    SPSv2_Logger::get_instance();
+        wp_set_script_translations('spsv2-admin-js', 'spsv2');
+    }
 }
 
-// =================== INICIALIZAÇÃO DO PLUGIN =================== //
-global $spsv2;
-$spsv2 = new SyncPostWithOtherSiteV2();
+// Inicializa o plugin
+global $spsv2_core;
+$spsv2_core = new SyncPostWithOtherSiteV2();
+
+// =================== HOOKS DE LIMPEZA =================== //
+add_action('spsv2_daily_cleanup', function() {
+    $logger = SPSv2_Logger::get_instance();
+    $logger::clean_old_logs(30); // Mantém logs por 30 dias
+});
+
+// =================== VERIFICAÇÃO DE SSL =================== //
+add_action('wp_loaded', function() {
+    $settings = get_option('spsv2_settings');
+    
+    if ($settings['security']['force_ssl'] && !is_ssl()) {
+        wp_die(__('Este plugin requer HTTPS para funcionar com segurança. Por favor, migre seu site para HTTPS.', 'spsv2'));
+    }
+});
