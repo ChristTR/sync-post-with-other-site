@@ -14,15 +14,14 @@ if (!class_exists('SPS_Post_Meta')) {
         function register_meta_settings()
         {
             global $sps_settings;
-            add_meta_box(
-                'sps_websites', 
-                __('Select Websites', SPS_txt_domain), 
-                array( $this, 'print_meta_fields' ), 
-                $sps_settings->sps_get_post_types(), 
-                'side', 
-                'default'
-            );
-        }
+add_meta_box(
+    'spsv2_websites',
+    __('Sites de Sincronização v2', SPSV2_txt_domain),
+    array($this, 'spsv2_render_meta_box'),
+    $this->get_supported_post_types(), // Novo método interno
+    'side',
+    'default'
+);
         
         public function print_meta_fields()
         {
