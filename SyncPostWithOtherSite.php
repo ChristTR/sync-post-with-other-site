@@ -107,21 +107,22 @@ class SyncPostWithOtherSiteV2 {
         }
     }
 
-    private function spsv2_initialize_modules() {
-        require_once(SPSV2_INCLUDES_DIR . 'spsv2_sync.class.php');
-        require_once(SPSV2_INCLUDES_DIR . 'spsv2_settings.class.php');
-        require_once(SPSV2_INCLUDES_DIR . 'spsv2_post_meta.class.php');
-        require_once(SPSV2_INCLUDES_DIR . 'spsv2_logger.class.php');
-
-        
-
-        // Ordem CRÍTICA de inicialização
-        global $spsv2_settings;
-        $spsv2_settings = new SPSv2_Settings();
-        new SPSv2_Sync();
-        new SPSv2_Post_Meta();
-        SPSv2_Logger::get_instance();
-    }
+private function spsv2_initialize_modules() {
+    // dependências
+    require_once(SPSV2_INCLUDES_DIR . 'spsv2_settings.class.php');
+    require_once(SPSV2_INCLUDES_DIR . 'spsv2_logger.class.php');
+    
+    //  Settings ANTES de outros módulos
+    global $spsv2_settings;
+    $spsv2_settings = new SPSv2_Settings();
+    
+    //  demais classes
+    require_once(SPSV2_INCLUDES_DIR . 'spsv2_sync.class.php');
+    require_once(SPSV2_INCLUDES_DIR . 'spsv2_post_meta.class.php');
+    
+    new SPSv2_Sync();
+    new SPSv2_Post_Meta();
+    SPSv2_Logger::get_instance();
 }
 
 // =================== INICIALIZAÇÃO DO PLUGIN =================== //
