@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) exit;
 
 // Definições da Versão 2
 define( 'SPSV2_PLUGIN', '/sync-post-with-other-site-v2/');
-define( 'SPSV2_PLUGIN_DIR', WP_PLUGIN_DIR . SPSV2_PLUGIN);
+define('SPSV2_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define( 'SPSV2_INCLUDES_DIR', SPSV2_PLUGIN_DIR . 'includes/');
 define( 'SPSV2_ASSETS_DIR', SPSV2_PLUGIN_DIR . 'assets/');
 define( 'SPSV2_txt_domain', 'spsv2_text_domain' );
@@ -95,8 +95,11 @@ $spsv2 = new SyncPostWithOtherSiteV2();
 
 // Carregar módulos da Versão 2
 require_once(SPSV2_INCLUDES_DIR . 'spsv2_sync.class.php');
+require_once(SPSV2_INCLUDES_DIR . 'spsv2_settings.class.php');
 require_once(SPSV2_INCLUDES_DIR . 'spsv2_post_meta.class.php');
 require_once(SPSV2_INCLUDES_DIR . 'spsv2_logger.class.php');
 
+
 new SPSv2_Sync();
+new SPSv2_Settings();
 new SPSv2_Post_Meta();
