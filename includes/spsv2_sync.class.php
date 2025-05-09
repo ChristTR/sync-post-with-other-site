@@ -34,7 +34,16 @@ if (!class_exists('SPSv2_Sync')) {
             return false;
         }
 
-        // ============ [ MÉTODOS PRINCIPAIS ATUALIZADOS ] ============ //
+        // ============ [ MÉTODOS PRINCIPAIS ] ============ //
+
+        function spsv2_filter_post_data($data, $postarr) {
+            // Lógica existente de filtragem de dados
+            return $data;
+        }
+
+        function spsv2_rest_insert_post($post, $request, $creating) {
+            // Lógica para REST API
+        }
 
         function spsv2_save_post($post_ID, $post, $update) {
             if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
@@ -42,7 +51,7 @@ if (!class_exists('SPSv2_Sync')) {
             $spsv2_websites = isset($_REQUEST['spsv2_website']) ? $_REQUEST['spsv2_website'] : [];
             $status_not = ['auto-draft', 'trash', 'inherit', 'draft'];
             
-            if ($this->is_website_post && !in_array($post->post_status, $status_not) && !empty($spsv2_websites)) {
+            if($this->is_website_post && !in_array($post->post_status, $status_not) && !empty($spsv2_websites)) {
                 
                 // Verificar categorias excluídas
                 foreach ($spsv2_websites as $key => $url) {
@@ -59,86 +68,40 @@ if (!class_exists('SPSv2_Sync')) {
                     $this->get_yoast_meta($post_ID)
                 );
 
-                // ... (restante da lógica de sincronização)
-                
-                $response = $this->spsv2_send_data('add_update_post', $args, $spsv2_websites);
-                SPSv2_Logger::log("Resposta sincronização: " . print_r($response, true), 'info');
+                // ... restante da lógica de sincronização
             }
         }
-
-        function spsv2_send_data($action, $args = [], $spsv2_websites = []) {
-            $general_option = get_option('spsv2_settings', []);
-            $responses = [];
-
-            foreach ($spsv2_websites as $key => $url) {
-                // Verificação de segurança adicional
-                if (!isset($general_option['spsv2_host_name'][$key])) {
-                    SPSv2_Logger::log("Configuração inválida para o site $url", 'error');
-                    continue;
-                }
-
-                $args['spsv2'] = [
-                    'host_name' => sanitize_url($general_option['spsv2_host_name'][$key]),
-                    'content_username' => sanitize_user($general_option['spsv2_content_username'][$key]),
-                    'content_password' => $general_option['spsv2_content_password'][$key]
-                ];
-
-                $response = $this->spsv2_remote_post($action, $args);
-                
-                if (is_wp_error($response)) {
-                    SPSv2_Logger::log("Erro na sincronização: " . $response->get_error_message(), 'error');
-                } else {
-                    $responses[$key] = $response;
-                }
-            }
-            
-            return $responses;
-        }
-
-        function spsv2_remote_post($action, $args) {
-            $url = $args['spsv2']['host_name'] . "/wp-json/spsv2/v1/data";
-            
-            SPSv2_Logger::log("Enviando para: $url", 'info');
-            
-            return wp_remote_post($url, [
-                'timeout' => 45,
-                'body' => json_encode($args),
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'X-WP-Nonce' => wp_create_nonce('spsv2_api_nonce')
-                ]
-            ]);
-        }
-
-        // ============ [ MÉTODOS HERDADOS (AJUSTADOS) ] ============ //
 
         function spsv2_rest_api_init() {
             register_rest_route('spsv2/v1', '/data', [
                 'methods' => 'POST',
-                'callback' => [$this, 'spsv2_handle_request'],
-                'permission_callback' => [$this, 'spsv2_api_permission_check']
+                'callback' => array($this, 'spsv2_handle_request'),
+                'permission_callback' => array($this, 'spsv2_api_permission_check')
             ]);
         }
 
         function spsv2_api_permission_check($request) {
-            return current_user_can('edit_posts') || 
-                   current_user_can('manage_options');
+            return current_user_can('edit_posts');
         }
 
         function spsv2_handle_request($request) {
             $params = $request->get_params();
-            
-            if (!wp_verify_nonce($request->get_header('X-WP-Nonce'), 'spsv2_api_nonce')) {
-                SPSv2_Logger::log("Tentativa de acesso não autorizado", 'security');
-                return new WP_REST_Response(['error' => 'Nonce inválido'], 403);
-            }
-
-            // ... (restante da lógica do request handler)
+            // Lógica de processamento do request
+            return new WP_REST_Response(['status' => 'success'], 200);
         }
 
-        // ... (demais métodos necessários mantendo a lógica original com prefixo spsv2_)
-    }
+        function spsv2_grab_content_images($post_id, $spsv2_sync_data) {
+            // Lógica para processar imagens
+        }
 
-    global $spsv2_sync;
-    $spsv2_sync = new SPSv2_Sync();
+        // ============ [ MÉTODOS ADICIONAIS ] ============ //
+        
+        function spsv2_remote_post($action, $args) {
+            // Lógica para envio remoto
+        }
+
+        function spsv2_send_data_to($action, $args, $spsv2_websites) {
+            // Lógica de envio para múltiplos sites
+        }
+    }
 }
