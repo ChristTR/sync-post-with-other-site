@@ -12,16 +12,65 @@ defined('ABSPATH') || exit;
 // -----------------------------------------
 // LOG (sucesso e erro apenas)
 // -----------------------------------------
+// Define o arquivo de log
 if (!defined('SPMV2_LOG_FILE')) {
     define('SPMV2_LOG_FILE', WP_CONTENT_DIR . '/syncmasterlog.txt');
 }
+
+// Função para registrar logs (sucesso/erro)
 function spmv2_log($msg) {
     if (!is_string($msg)) $msg = print_r($msg, true);
+    
     @file_put_contents(
         SPMV2_LOG_FILE,
         '['.date('Y-m-d H:i:s').'] '.$msg.PHP_EOL,
         FILE_APPEND | LOCK_EX
     );
+}
+
+// Função para renderizar a página do log visual
+function spm_v2_render_log_page() {
+    $log_file = SPMV2_LOG_FILE; // Caminho do arquivo de log
+    
+    if (file_exists($log_file)) {
+        $logs = file_get_contents($log_file);
+    } else {
+        $logs = 'No logs available.';
+    }
+    
+    // Filtragem de logs por status
+    if (isset($_GET['filter_status']) && $_GET['filter_status'] !== '') {
+        $status_filter = $_GET['filter_status'];
+        $logs = preg_replace("/\[.*\].*\b$status_filter\b.*/", '', $logs);
+    }
+    
+    // Filtragem por data
+    if (isset($_GET['filter_date']) && $_GET['filter_date'] !== '') {
+        $date_filter = $_GET['filter_date'];
+        $logs = preg_replace("/\[.*\].*\b$date_filter\b.*/", '', $logs);
+    }
+
+    // Exibe a página de log
+    echo '<div class="wrap">';
+    echo '<h1>Log Visual</h1>';
+
+    // Formulário de filtragem
+    echo '<form method="get" action="">';
+    echo '<input type="hidden" name="page" value="spm-v2-log">';
+    echo '<label for="filter_status">Filter by Status:</label>';
+    echo '<select name="filter_status">
+            <option value="">All</option>
+            <option value="success">Success</option>
+            <option value="error">Error</option>
+          </select>';
+    echo '<label for="filter_date">Filter by Date:</label>';
+    echo '<input type="date" name="filter_date">';
+    echo '<input type="submit" value="Filter" class="button">';
+    echo '</form>';
+
+    // Exibe os logs filtrados
+    echo '<textarea rows="20" cols="100" readonly>' . esc_textarea($logs) . '</textarea>';
+    echo '</div>';
 }
 
 // -----------------------------------------
@@ -61,17 +110,9 @@ register_deactivation_hook(__FILE__, function(){
 });
 
 // -----------------------------------------
-// CRON INTERVALO 5 MINUTOS
-// -----------------------------------------
-add_filter('cron_schedules', function($s){
-    $s['five_minutes'] = ['interval'=>300,'display'=>'A cada 5 minutos'];
-    return $s;
-});
-
-// -----------------------------------------
 // MENU DE CONFIGURAÇÕES
 // -----------------------------------------
-add_action('admin_menu', function(){
+add_action('admin_menu', function() {
     add_menu_page(
         'Sync Master',
         'Sync Master',
@@ -81,7 +122,17 @@ add_action('admin_menu', function(){
         'dashicons-update',
         80
     );
+    
+    add_submenu_page(
+        'spm-v2-settings',
+        'Log Visual',
+        'Log Visual',
+        'manage_options',
+        'spm-v2-log',
+        'spm_v2_render_log_page'
+    );
 });
+
 add_action('admin_init', function(){
     register_setting('spm_v2_group','spm_v2_settings','spm_v2_sanitize_settings');
 });
@@ -188,30 +239,34 @@ class SPM_v2_Core {
         add_action('add_meta_boxes',             [$this,'add_meta_box']);
         add_action('wp_ajax_spm_v2_manual_sync', [$this,'manual_sync']);
         add_action('rest_api_init',              [$this,'register_rest']);
-        if (!wp_next_scheduled('spm_v2_process_queue')) {
-            wp_schedule_event(time(),'five_minutes','spm_v2_process_queue');
-        }
     }
 
     // Save post
-    public function on_save($post_id, $post, $update){
-        if (!$this->settings['auto_sync']) return;
-        if ($post->post_status!=='publish' || wp_is_post_revision($post_id)) return;
-        $this->enqueue($post_id);
-    }
+public function on_save($post_id, $post, $update){
+    if (!$this->settings['auto_sync']) return;
+    if ($post->post_status!=='publish' || wp_is_post_revision($post_id)) return;
+    $this->enqueue($post_id);
+    $this->process_queue(); // <--- Adiciona esta linha para processar imediatamente
+}
 
     // Enqueue
-    private function enqueue($post_id){
-        global $wpdb;
-        foreach($this->settings['hosts'] as $h){
+private function enqueue($post_id){
+    global $wpdb;
+    foreach($this->settings['hosts'] as $h){
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$this->queue_table} WHERE post_id = %d AND host = %s",
+            $post_id, $h['url']
+        ));
+        if (!$exists) {
             $wpdb->insert($this->queue_table, [
                 'post_id'      => $post_id,
                 'host'         => $h['url'],
                 'next_attempt' => current_time('mysql'),
             ]);
+            spmv2_log("Enqueued post {$post_id} for host {$h['url']}");
         }
-        spmv2_log("Enqueued post {$post_id}");
     }
+}
 
     // Process queue
     public function process_queue(){
@@ -225,20 +280,23 @@ class SPM_v2_Core {
         }
     }
 
-    private function process_job($job){
-        try {
-            $post = get_post($job['post_id']);
-            $cfg  = $this->get_host($job['host']);
-            if ($post && $cfg) {
-                $this->sync_post($post,$cfg);
-                $this->record_success($job['post_id'],$job['host']);
-                global $wpdb;
-                $wpdb->delete($this->queue_table,['id'=>$job['id']]);
-            }
-        } catch (\Exception $e) {
-            spmv2_log("Error job{$job['id']}: ".$e->getMessage());
+private function process_job($job){
+    try {
+        $post = get_post($job['post_id']);
+        $cfg  = $this->get_host($job['host']);
+        if ($post && $cfg) {
+            $this->sync_post($post, $cfg);
+            $this->record_success($job['post_id'], $job['host']);
+            global $wpdb;
+            $wpdb->delete($this->queue_table, ['id' => $job['id']]);
         }
+    } catch (\Exception $e) {
+        spmv2_log("Error processing job {$job['id']}: ".$e->getMessage());
+        // Log adicional ou ação caso necessário
+    } catch (\Throwable $t) {
+        spmv2_log("Unexpected error processing job {$job['id']}: ".$t->getMessage());
     }
+}
 
     // Manual sync via AJAX
     public function add_meta_box(){
@@ -295,25 +353,27 @@ class SPM_v2_Core {
     }
 
     // Actual sync
-    private function sync_post($post,$h){
-        $jwt = $this->generate_jwt($h['secret']);
-        $payload = [
-            'post' => $this->prepare_post_data($post),
-            'meta' => $this->prepare_post_meta($post->ID),
-        ];
-        $response = wp_remote_post(rtrim($h['url'],'/').'/wp-json/spm/v2/sync',[
-            'headers'=>[
-                'Authorization'=>'Bearer '.$jwt,
-                'X-SPM-Signature'=>$this->generate_signature($post,$h['secret']),
-                'Content-Type'=>'application/json',
-            ],
-            'body'=>wp_json_encode($payload),
-            'timeout'=>30,
-        ]);
-        if (is_wp_error($response) || wp_remote_retrieve_response_code($response)!==201) {
-            throw new \Exception('Sync failed. Status: '.wp_remote_retrieve_response_code($response));
-        }
+private function sync_post($post, $h){
+    $jwt = $this->generate_jwt($h['secret']);
+    $payload = [
+        'post' => $this->prepare_post_data($post),
+        'meta' => $this->prepare_post_meta($post->ID),
+    ];
+    $response = wp_remote_post(rtrim($h['url'],'/').'/wp-json/spm/v2/sync',[
+        'headers'=>[
+            'Authorization'=>'Bearer '.$jwt,
+            'X-SPM-Signature'=>$this->generate_signature($post,$h['secret']),
+            'Content-Type'=>'application/json',
+        ],
+        'body'=>wp_json_encode($payload),
+        'timeout'=>30,
+    ]);
+    $code = wp_remote_retrieve_response_code($response);
+    if (is_wp_error($response) || !in_array($code, [200, 201], true)) {
+        spmv2_log("Error syncing post {$post->ID} to {$h['url']}. Status: $code");
+        throw new \Exception('Sync failed. Status: '.$code);
     }
+}
 
     private function record_success($post_id,$host){
         $d = get_post_meta($post_id,$this->meta_key,true);
