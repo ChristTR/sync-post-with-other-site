@@ -283,13 +283,13 @@ function spm_v2_render_manual_sync_box($post) {
     $settings = get_option('spm_v2_settings');
     ?>
     <div id="spm-manual-sync">
-        <select id="spm-target-host" class="widefat">
-            <?php foreach ($settings['hosts'] as $index => $host): ?>
-                <option value="<?= esc_attr($index) ?>">
-                    <?= esc_html(parse_url($host['url'], PHP_URL_HOST) ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
+<select id="spm-target-host" class="widefat">
+    <?php foreach ($settings['hosts'] as $index => $host): ?>
+        <option value="<?= esc_attr($index) ?>">
+            <?= esc_html(parse_url($host['url'], PHP_URL_HOST)) ?>
+        </option>
+    <?php endforeach; ?>
+</select>
         
         <button type="button" class="button button-primary" id="spm-trigger-sync" style="margin-top:10px;">
             <span class="dashicons dashicons-update"></span> Sincronizar Agora
