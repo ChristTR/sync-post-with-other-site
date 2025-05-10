@@ -264,6 +264,79 @@ function spm_v2_render_settings_page() {
     </div>
     <?php
 }
+
+// -----------------------------------------
+// SINCRONIZAÇÃO MANUAL (META BOX)
+// -----------------------------------------
+add_action('add_meta_boxes', function() {
+    add_meta_box(
+        'spm_v2_sync_manual',
+        'Sincronização Manual',
+        'spm_v2_render_manual_sync_box',
+        'post',
+        'side',
+        'high'
+    );
+});
+
+function spm_v2_render_manual_sync_box($post) {
+    $settings = get_option('spm_v2_settings');
+    ?>
+    <div id="spm-manual-sync">
+        <select id="spm-target-host" class="widefat">
+            <?php foreach ($settings['hosts'] as $index => $host): ?>
+                <option value="<?= esc_attr($index) ?>">
+                    <?= esc_html(parse_url($host['url'], PHP_URL_HOST) ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        
+        <button type="button" class="button button-primary" id="spm-trigger-sync" style="margin-top:10px;">
+            <span class="dashicons dashicons-update"></span> Sincronizar Agora
+        </button>
+        
+        <div id="spm-sync-result" style="margin-top:10px; display:none;">
+            <p class="success" style="color:green; display:none;">✓ Sincronizado com sucesso!</p>
+            <p class="error" style="color:red; display:none;"></p>
+        </div>
+    </div>
+
+    <script>
+    jQuery(document).ready(function($) {
+        $('#spm-trigger-sync').click(function() {
+            const hostIndex = $('#spm-target-host').val();
+            const postId = <?= $post->ID ?>;
+            
+            $('#spm-sync-result').hide().find('p').hide();
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'spm_manual_sync',
+                    post_id: postId,
+                    host_index: hostIndex,
+                    security: '<?= wp_create_nonce('spm_manual_sync_nonce') ?>'
+                },
+                success: function(response) {
+                    if(response.success) {
+                        $('#spm-sync-result .success').show();
+                    } else {
+                        $('#spm-sync-result .error').text(response.data).show();
+                    }
+                    $('#spm-sync-result').slideDown();
+                },
+                error: function(xhr) {
+                    $('#spm-sync-result .error').text('Erro na requisição: ' + xhr.statusText).show();
+                    $('#spm-sync-result').slideDown();
+                }
+            });
+        });
+    });
+    </script>
+    <?php
+}
+
 // -----------------------------------------
 // FUNCIONALIDADE DE SINCRONIZAÇÃO
 // -----------------------------------------
@@ -293,31 +366,43 @@ add_action('save_post', function($post_id) {
     ];
 
     // Enviar para hosts
-    foreach ($settings['hosts'] as $host) {
+   // Modifique a parte de envio para hosts
+foreach ($settings['hosts'] as $host) {
+    try {
         $response = wp_remote_post($host['url'] . '/wp-json/spm/v2/sync', [
             'headers' => [
-                'Authorization' => 'Bearer ' . JWT::encode(['exp' => time() + 300], $host['secret'])
+                'Authorization' => 'Bearer ' . JWT::encode(['exp' => time() + 300], $host['secret']),
+                'Content-Type' => 'application/json'
             ],
-            'body' => $data
+            'body' => json_encode($data),
+            'timeout' => 15
         ]);
 
-        // Verificar resposta
-        if (wp_remote_retrieve_response_code($response) === 200) {
-            $body = json_decode(wp_remote_retrieve_body($response), true);
-            if (!$body['success']) {
-                spmv2_log('Erro na sincronização', [
-                    'host' => $host['url'],
-                    'erro' => $body['message']
-                ]);
-            }
-        } else {
-            spmv2_log('Falha na comunicação', [
-                'host' => $host['url'],
-                'codigo' => wp_remote_retrieve_response_code($response)
-            ]);
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = json_decode(wp_remote_retrieve_body($response), true);
+
+        // Log detalhado
+        spmv2_log('Dados enviados para ' . $host['url'], [
+            'payload' => $data,
+            'response_code' => $response_code,
+            'response_body' => $response_body
+        ]);
+
+        if ($response_code !== 200) {
+            throw new Exception("Código de resposta inválido: $response_code");
         }
+
+        if (!$response_body['success'] ?? false) {
+            throw new Exception($response_body['message'] ?? 'Erro não especificado');
+        }
+
+    } catch (Exception $e) {
+        spmv2_log('Falha na sincronização com ' . $host['url'], [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
     }
-});
+}
 
 // -----------------------------------------
 // API REST
@@ -437,6 +522,63 @@ function spm_v2_render_log_page() {
     <?php
 }
 
+// -----------------------------------------
+// HANDLER AJAX PARA SINCRONIZAÇÃO MANUAL
+// -----------------------------------------
+add_action('wp_ajax_spm_manual_sync', function() {
+    check_ajax_referer('spm_manual_sync_nonce', 'security');
+    
+    if (!current_user_can('edit_posts')) {
+        wp_send_json_error('Permissão negada');
+    }
+
+    $post_id = absint($_POST['post_id']);
+    $host_index = absint($_POST['host_index']);
+    
+    $settings = get_option('spm_v2_settings');
+    $host = $settings['hosts'][$host_index] ?? null;
+    
+    if (!$host) {
+        wp_send_json_error('Host inválido');
+    }
+
+    $post = get_post($post_id);
+    $data = [
+        'title' => $post->post_title,
+        'content' => $post->post_content,
+        'status' => 'publish',
+        'author' => $settings['default_author'],
+        'meta' => get_post_meta($post_id)
+    ];
+
+    try {
+        $response = wp_remote_post($host['url'] . '/wp-json/spm/v2/sync', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . JWT::encode(['exp' => time() + 300], $host['secret']),
+                'Content-Type' => 'application/json'
+            ],
+            'body' => json_encode($data),
+            'timeout' => 15
+        ]);
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = json_decode(wp_remote_retrieve_body($response), true);
+
+        if ($response_code !== 200 || !isset($response_body['success'])) {
+            throw new Exception('Resposta inválida do servidor');
+        }
+
+        if (!$response_body['success']) {
+            wp_send_json_error($response_body['message'] ?? 'Erro desconhecido');
+        }
+
+        wp_send_json_success();
+
+    } catch (Exception $e) {
+        wp_send_json_error($e->getMessage());
+    }
+});
+    
 // Classe JWT simplificada (Recomendo usar uma biblioteca oficial em produção)
 class JWT {
     public static function encode($payload, $secret) {
