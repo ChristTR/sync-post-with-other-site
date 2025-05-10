@@ -1,116 +1,53 @@
 <?php
 /*
-Plugin Name: Sync Post Master v2
-Description: Sincronização completa com controle manual/automático e segurança reforçada
-Version: 3.0.0
+Plugin Name: Sync Master Pro
+Description: Plugin de sincronização avançada entre sites WordPress
+Version: 2.0
 Author: Seu Nome
-Text Domain: spmv2
 */
 
+// Segurança básica
 defined('ABSPATH') || exit;
 
 // -----------------------------------------
-// LOG (sucesso e erro apenas)
+// ATIVAÇÃO/DESATIVAÇÃO
 // -----------------------------------------
-// Define o arquivo de log
-if (!defined('SPMV2_LOG_FILE')) {
-    define('SPMV2_LOG_FILE', WP_CONTENT_DIR . '/syncmasterlog.txt');
-}
-
-// Função para registrar logs (sucesso/erro)
-function spmv2_log($msg) {
-    if (!is_string($msg)) $msg = print_r($msg, true);
-    
-    @file_put_contents(
-        SPMV2_LOG_FILE,
-        '['.date('Y-m-d H:i:s').'] '.$msg.PHP_EOL,
-        FILE_APPEND | LOCK_EX
-    );
-}
-
-// Função para renderizar a página do log visual
-function spm_v2_render_log_page() {
-    $log_file = SPMV2_LOG_FILE; // Caminho do arquivo de log
-    
-    if (file_exists($log_file)) {
-        $logs = file_get_contents($log_file);
-    } else {
-        $logs = 'No logs available.';
+register_activation_hook(__FILE__, function() {
+    if (!wp_next_scheduled('spm_v2_process_queue')) {
+        wp_schedule_event(time(), 'hourly', 'spm_v2_process_queue');
     }
-    
-    // Filtragem de logs por status
-    if (isset($_GET['filter_status']) && $_GET['filter_status'] !== '') {
-        $status_filter = $_GET['filter_status'];
-        $logs = preg_replace("/\[.*\].*\b$status_filter\b.*/", '', $logs);
-    }
-    
-    // Filtragem por data
-    if (isset($_GET['filter_date']) && $_GET['filter_date'] !== '') {
-        $date_filter = $_GET['filter_date'];
-        $logs = preg_replace("/\[.*\].*\b$date_filter\b.*/", '', $logs);
-    }
-
-    // Exibe a página de log
-    echo '<div class="wrap">';
-    echo '<h1>Log Visual</h1>';
-
-    // Formulário de filtragem
-    echo '<form method="get" action="">';
-    echo '<input type="hidden" name="page" value="spm-v2-log">';
-    echo '<label for="filter_status">Filter by Status:</label>';
-    echo '<select name="filter_status">
-            <option value="">All</option>
-            <option value="success">Success</option>
-            <option value="error">Error</option>
-          </select>';
-    echo '<label for="filter_date">Filter by Date:</label>';
-    echo '<input type="date" name="filter_date">';
-    echo '<input type="submit" value="Filter" class="button">';
-    echo '</form>';
-
-    // Exibe os logs filtrados
-    echo '<textarea rows="20" cols="100" readonly>' . esc_textarea($logs) . '</textarea>';
-    echo '</div>';
-}
-
-// -----------------------------------------
-// ATIVAÇÃO / DESATIVAÇÃO
-// -----------------------------------------
-register_activation_hook(__FILE__, function(){
-    global $wpdb;
-    $tbl = $wpdb->prefix . 'spm_v2_queue';
-    $cs  = $wpdb->get_charset_collate();
-    $sql = "CREATE TABLE $tbl (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        post_id BIGINT UNSIGNED NOT NULL,
-        host VARCHAR(255) NOT NULL,
-        attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
-        last_attempt DATETIME,
-        next_attempt DATETIME NOT NULL,
-        INDEX(post_id),
-        INDEX(host)
-    ) $cs;";
-    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-    dbDelta($sql);
-
-    add_option('spm_v2_settings', [
-        'auto_sync' => true,
-        'hosts'     => [],
-        'security'  => [
-            'jwt_secret'=> bin2hex(random_bytes(32)),
-            'force_ssl' => true,
-        ],
-    ]);
-    spmv2_log('Plugin ativado.');
+    flush_rewrite_rules();
 });
 
-register_deactivation_hook(__FILE__, function(){
+register_deactivation_hook(__FILE__, function() {
     wp_clear_scheduled_hook('spm_v2_process_queue');
+    flush_rewrite_rules();
     spmv2_log('Plugin desativado.');
 });
 
 // -----------------------------------------
-// MENU DE CONFIGURAÇÕES
+// FUNÇÃO DE LOG
+// -----------------------------------------
+function spmv2_log($message, $data = null) {
+    $log_entry = "[" . date('Y-m-d H:i:s') . "] " . $message . PHP_EOL;
+    
+    if ($data) {
+        $log_entry .= "Detalhes: " . print_r($data, true) . PHP_EOL;
+    }
+
+    // Adicione isto APENAS se tiver a variável $final_author_id
+    if (strpos($message, 'author') !== false && isset($data['final_author_id'])) {
+        $log_entry .= "Autor Fallback Debug:\n";
+        $log_entry .= "Usuário Original: " . print_r($data['author'], true) . "\n";
+        $log_entry .= "Usuário Selecionado: " . get_user_by('ID', $data['final_author_id'])->display_name . "\n";
+    }
+
+    file_put_contents(WP_CONTENT_DIR . '/spm-v2.log', $log_entry, FILE_APPEND);
+}
+
+
+// -----------------------------------------
+// CONFIGURAÇÕES DO PLUGIN
 // -----------------------------------------
 add_action('admin_menu', function() {
     add_menu_page(
@@ -125,321 +62,501 @@ add_action('admin_menu', function() {
     
     add_submenu_page(
         'spm-v2-settings',
-        'Log Visual',
-        'Log Visual',
+        'Logs',
+        'Logs',
         'manage_options',
         'spm-v2-log',
         'spm_v2_render_log_page'
     );
 });
 
-add_action('admin_init', function(){
-    register_setting('spm_v2_group','spm_v2_settings','spm_v2_sanitize_settings');
+add_action('admin_init', function() {
+    register_setting('spm_v2_group', 'spm_v2_settings', 'spm_v2_sanitize_settings');
+
+    add_settings_section(
+        'spm_v2_general',
+        'Configurações Gerais',
+        function() { echo '<p>Configurações principais da sincronização</p>'; },
+        'spm-v2-settings'
+    );
+
+    add_settings_field(
+        'auto_sync',
+        'Sincronização Automática',
+        'spm_v2_auto_sync_field',
+        'spm-v2-settings',
+        'spm_v2_general'
+    );
+
+    add_settings_section(
+        'spm_v2_hosts',
+        'Hosts Remotos',
+        function() { echo '<p>Configure os sites para sincronização</p>'; },
+        'spm-v2-settings'
+    );
+
+    add_settings_section(
+        'spm_v2_security',
+        'Segurança',
+        function() { echo '<p>Configurações de segurança da API</p>'; },
+        'spm-v2-settings'
+    );
+
+    add_settings_field(
+        'jwt_secret',
+        'Segredo JWT',
+        'spm_v2_jwt_secret_field',
+        'spm-v2-settings',
+        'spm_v2_security'
+    );
+
+    add_settings_field(
+        'default_author',
+        'Autor Padrão',
+        'spm_v2_default_author_field',
+        'spm-v2-settings',
+        'spm_v2_general'
+    );
 });
-function spm_v2_sanitize_settings($in){
-    $in['auto_sync'] = !empty($in['auto_sync']);
-    if (!empty($in['hosts']) && is_array($in['hosts'])) {
-        foreach ($in['hosts'] as &$h) {
-            $h['url']    = esc_url_raw($h['url']);
-            $h['secret'] = sanitize_text_field($h['secret']);
-        }
-    } else {
-        $in['hosts'] = [];
-    }
-    $in['security']['jwt_secret'] = sanitize_text_field($in['security']['jwt_secret']);
-    $in['security']['force_ssl']  = !empty($in['security']['force_ssl']);
-    return $in;
-}
-function spm_v2_render_settings_page(){
-    $s = get_option('spm_v2_settings');
+
+// Campos de configuração
+function spm_v2_auto_sync_field() {
+    $settings = get_option('spm_v2_settings');
     ?>
-    <div class="wrap">
-      <h1>Sync Master Settings</h1>
-      <form method="post" action="options.php">
-        <?php settings_fields('spm_v2_group'); ?>
-        <h2>General</h2>
-        <table class="form-table">
-          <tr>
-            <th>Auto Sync</th>
-            <td>
-              <label>
-                <input type="checkbox" name="spm_v2_settings[auto_sync]" <?php checked($s['auto_sync'],true); ?>>
-                Enable automatic sync on post save
-              </label>
-            </td>
-          </tr>
-        </table>
-        <h2>Remote Hosts</h2>
-        <div id="spm-hosts">
-          <?php foreach($s['hosts'] as $i=>$h): ?>
-          <div class="host-entry">
-            <input type="url" name="spm_v2_settings[hosts][<?= $i ?>][url]" value="<?= esc_url($h['url']) ?>" placeholder="https://remote.com" required>
-            <input type="text" name="spm_v2_settings[hosts][<?= $i ?>][secret]" value="<?= esc_attr($h['secret']) ?>" placeholder="Secret" required>
-          </div>
-          <?php endforeach; ?>
-        </div>
-        <button type="button" id="spm-add-host" class="button">Add Host</button>
-        <h2>Security</h2>
-        <table class="form-table">
-          <tr>
-            <th>JWT Secret</th>
-            <td>
-              <input type="text" name="spm_v2_settings[security][jwt_secret]" value="<?= esc_attr($s['security']['jwt_secret']) ?>" readonly class="regular-text">
-              <button type="button" class="button button-small" onclick="spm_v2_new_secret()">Generate New</button>
-            </td>
-          </tr>
-          <tr>
-            <th>Force HTTPS</th>
-            <td>
-              <label>
-                <input type="checkbox" name="spm_v2_settings[security][force_ssl]" <?php checked($s['security']['force_ssl'],true); ?>>
-                Enable force SSL on REST requests
-              </label>
-            </td>
-          </tr>
-        </table>
-        <?php submit_button(); ?>
-      </form>
-    </div>
-    <script>
-    document.getElementById('spm-add-host').onclick = function(){
-      var c = document.getElementById('spm-hosts'), i = c.children.length;
-      var div = document.createElement('div');
-      div.className='host-entry';
-      div.innerHTML = '<input type="url" name="spm_v2_settings[hosts]['+i+'][url]" placeholder="https://remote.com" required> ' +
-                      '<input type="text" name="spm_v2_settings[hosts]['+i+'][secret]" placeholder="Secret" required>';
-      c.appendChild(div);
-    };
-    function spm_v2_new_secret(){
-      var f = document.querySelector('[name="spm_v2_settings[security][jwt_secret]"]');
-      var r = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-                   .map(b=>b.toString(16).padStart(2,'0')).join('');
-      f.value = r;
-    }
-    </script>
+    <label>
+        <input type="checkbox" name="spm_v2_settings[auto_sync]" <?php checked($settings['auto_sync'] ?? false, true); ?>>
+        Ativar sincronização automática ao salvar posts
+    </label>
     <?php
 }
 
-// -----------------------------------------
-// CLASSE PRINCIPAL
-// -----------------------------------------
-class SPM_v2_Core {
-    private $settings, $queue_table, $meta_key = '_spm_v2_sync_data';
-
-    public function __construct(){
-        global $wpdb;
-        $this->queue_table = $wpdb->prefix . 'spm_v2_queue';
-        $this->settings    = get_option('spm_v2_settings');
-        $this->hooks();
-    }
-
-    private function hooks(){
-        add_action('save_post',                  [$this,'on_save'],10,3);
-        add_action('spm_v2_process_queue',       [$this,'process_queue']);
-        add_action('add_meta_boxes',             [$this,'add_meta_box']);
-        add_action('wp_ajax_spm_v2_manual_sync', [$this,'manual_sync']);
-        add_action('rest_api_init',              [$this,'register_rest']);
-    }
-
-    // Save post
-public function on_save($post_id, $post, $update){
-    if (!$this->settings['auto_sync']) return;
-    if ($post->post_status!=='publish' || wp_is_post_revision($post_id)) return;
-    $this->enqueue($post_id);
-    $this->process_queue(); // <--- Adiciona esta linha para processar imediatamente
+function spm_v2_jwt_secret_field() {
+    $settings = get_option('spm_v2_settings');
+    ?>
+    <input type="text" name="spm_v2_settings[security][jwt_secret]" 
+           value="<?= esc_attr($settings['security']['jwt_secret'] ?? '') ?>" 
+           class="regular-text" required>
+    <p class="description">Chave secreta para autenticação JWT</p>
+    <?php
 }
 
-    // Enqueue
-private function enqueue($post_id){
-    global $wpdb;
-    foreach($this->settings['hosts'] as $h){
-        $exists = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->queue_table} WHERE post_id = %d AND host = %s",
-            $post_id, $h['url']
-        ));
-        if (!$exists) {
-            $wpdb->insert($this->queue_table, [
-                'post_id'      => $post_id,
-                'host'         => $h['url'],
-                'next_attempt' => current_time('mysql'),
-            ]);
-            spmv2_log("Enqueued post {$post_id} for host {$h['url']}");
-        }
-    }
-}
-
-    // Process queue
-    public function process_queue(){
-        global $wpdb;
-        $jobs = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM {$this->queue_table} WHERE next_attempt<=%s ORDER BY next_attempt ASC LIMIT 10",
-            current_time('mysql')
-        ), ARRAY_A);
-        foreach($jobs as $job){
-            $this->process_job($job);
-        }
-    }
-
-private function process_job($job){
-    try {
-        $post = get_post($job['post_id']);
-        $cfg  = $this->get_host($job['host']);
-        if ($post && $cfg) {
-            $this->sync_post($post, $cfg);
-            $this->record_success($job['post_id'], $job['host']);
-            global $wpdb;
-            $wpdb->delete($this->queue_table, ['id' => $job['id']]);
-        }
-    } catch (\Exception $e) {
-        spmv2_log("Error processing job {$job['id']}: ".$e->getMessage());
-        // Log adicional ou ação caso necessário
-    } catch (\Throwable $t) {
-        spmv2_log("Unexpected error processing job {$job['id']}: ".$t->getMessage());
-    }
-}
-
-    // Manual sync via AJAX
-    public function add_meta_box(){
-        add_meta_box('spm_sync','Sync Now',[$this,'render_meta_box'],'post','side','high');
-    }
-    public function render_meta_box($post){
-        $nonce = wp_create_nonce('spm_v2_manual_sync');
-        echo '<button id="spm_sync_btn" class="button button-primary">Sync Now</button>';
-        ?>
-        <script>
-        document.getElementById('spm_sync_btn').onclick = function(){
-            var f=new FormData();
-            f.append('action','spm_v2_manual_sync');
-            f.append('post_id',<?=$post->ID?>);
-            f.append('security','<?= $nonce ?>');
-            fetch(ajaxurl,{method:'POST',body:f})
-              .then(function(){ location.reload(); });
-        };
-        </script>
-        <?php
-    }
-    public function manual_sync(){
-        check_ajax_referer('spm_v2_manual_sync','security');
-        $pid = intval($_POST['post_id']);
-        if (!current_user_can('edit_post',$pid)) wp_send_json_error();
-        $this->enqueue($pid);
-        wp_send_json_success();
-    }
-
-    // REST endpoint
-    public function register_rest(){
-        register_rest_route('spm/v2','/sync',[
-            'methods'             => 'POST',
-            'callback'            => [$this,'rest_sync'],
-            'permission_callback' => fn()=>true,
-        ]);
-    }
-    public function rest_sync($request){
-        $data = $request->get_json_params();
-        if (!empty($data['meta'][$this->meta_key])) {
-            return new WP_REST_Response(['error'=>'Loop'],400);
-        }
-        $pid = wp_insert_post([
-            'post_title'   => sanitize_text_field($data['post']['post_title']),
-            'post_content' => wp_kses_post($data['post']['post_content']),
-            'post_status'  => 'publish',
-            'post_type'    => $data['post']['post_type'] ?? 'post',
-        ]);
-        if (is_wp_error($pid) || !$pid) {
-            return new WP_REST_Response(['error'=>'Creation Failed'],500);
-        }
-        $this->update_post_meta($pid,$data['meta']);
-        return new WP_REST_Response(['success'=>true,'id'=>$pid],201);
-    }
-
-    // Actual sync
-private function sync_post($post, $h){
-    $jwt = $this->generate_jwt($h['secret']);
-    $payload = [
-        'post' => $this->prepare_post_data($post),
-        'meta' => $this->prepare_post_meta($post->ID),
-    ];
-    $response = wp_remote_post(rtrim($h['url'],'/').'/wp-json/spm/v2/sync',[
-        'headers'=>[
-            'Authorization'=>'Bearer '.$jwt,
-            'X-SPM-Signature'=>$this->generate_signature($post,$h['secret']),
-            'Content-Type'=>'application/json',
-        ],
-        'body'=>wp_json_encode($payload),
-        'timeout'=>30,
+function spm_v2_default_author_field() {
+    $settings = get_option('spm_v2_settings');
+    $selected = $settings['default_author'] ?? get_current_user_id();
+    
+    wp_dropdown_users([
+        'name' => 'spm_v2_settings[default_author]',
+        'selected' => $selected,
+        'show_option_none' => 'Selecione um autor',
+        'option_none_value' => ''
     ]);
-    $code = wp_remote_retrieve_response_code($response);
-    if (is_wp_error($response) || !in_array($code, [200, 201], true)) {
-        spmv2_log("Error syncing post {$post->ID} to {$h['url']}. Status: $code");
-        throw new \Exception('Sync failed. Status: '.$code);
+    
+    if (!get_user_by('ID', $selected)) {
+        echo '<p class="error">⚠️ Usuário não existe! Usando admin atual.</p>';
     }
 }
 
-    private function record_success($post_id,$host){
-        $d = get_post_meta($post_id,$this->meta_key,true);
-        $d['hosts'][$host] = ['time'=>time()];
-        update_post_meta($post_id,$this->meta_key,$d);
-        spmv2_log("Success post {$post_id} @ {$host}");
+// Sanitização
+function spm_v2_sanitize_settings($input) {
+    // Sincronização automática
+    $input['auto_sync'] = isset($input['auto_sync']);
+
+    // Hosts remotos
+    $input['hosts'] = array_values(array_filter($input['hosts'] ?? [], function($host) {
+        if (!empty($host['url']) && !empty($host['secret'])) {
+            return wp_http_validate_url($host['url']) !== false;
+        }
+        return false;
+    }));
+
+    // Segurança
+    $input['security']['jwt_secret'] = sanitize_text_field($input['security']['jwt_secret'] ?? '');
+    $input['security']['force_ssl'] = isset($input['security']['force_ssl']);
+
+    // Autor padrão
+    $input['default_author'] = absint($input['default_author'] ?? get_current_user_id());
+    if (!get_user_by('ID', $input['default_author'])) {
+        $input['default_author'] = get_current_user_id();
+        add_settings_error('spm_v2_settings', 'invalid-author', 'Autor inválido, usando usuário atual');
     }
 
-    // UTILITÁRIOS
-    private function get_host($url){
-        foreach($this->settings['hosts'] as $h){
-            if ($h['url'] === $url) return $h;
-        }
-        return null;
-    }
-    private function generate_jwt($secret){
-        $h = base64Url(json_encode(['alg'=>'HS256','typ'=>'JWT']));
-        $p = base64Url(json_encode(['iss'=>get_site_url(),'iat'=>time(),'exp'=>time()+300]));
-        $sig = base64Url(hash_hmac('sha256',"$h.$p",$secret,true));
-        return "$h.$p.$sig";
-    }
-    private function generate_signature($post,$secret){
-        return hash_hmac('sha256',$post->ID.'|'.$post->post_modified,$secret);
-    }
-    private function prepare_post_data($post){
-        return [
-            'ID'=>$post->ID,
-            'post_title'=>$post->post_title,
-            'post_content'=>$post->post_content,
-            'post_excerpt'=>$post->post_excerpt,
-            'post_type'=>$post->post_type,
-            'post_date'=>$post->post_date,
-            'post_modified'=>$post->post_modified,
-            'post_author'=>$this->get_author_data($post->post_author),
-        ];
-    }
-    private function prepare_post_meta($id){
-        $out=[];foreach(get_post_meta($id) as $k=>$v){
-            if (strpos($k,$this->meta_key)===0) continue;
-            $out[$k] = array_map('maybe_unserialize',$v);
-        }
-        return $out;
-    }
-    private function update_post_meta($id,$meta){
-        foreach($meta as $k=>$vals){
-            if (strpos($k,$this->meta_key)===0) continue;
-            delete_post_meta($id,$k);
-            foreach((array)$vals as $v) add_post_meta($id,$k,$v);
+    // Fallback para admin
+    $input['use_admin_fallback'] = isset($input['use_admin_fallback']);
+
+    // Verificação de capacidade
+    if ($user = get_user_by('ID', $input['default_author'])) {
+        if (!user_can($user, 'publish_posts')) {
+            add_settings_error(
+                'spm_v2_settings', 
+                'invalid-author-capability', 
+                'O autor padrão não tem permissão para publicar posts'
+            );
+            $input['default_author'] = get_current_user_id();
         }
     }
-    private function get_author_data($aid){
-        $u = get_userdata($aid);
-        return $u?[
-            'display_name'=>$u->display_name,
-            'user_email'=>$u->user_email,
-            'user_login'=>$u->user_login
-        ]:[];
-    }
+
+    return $input;
 }
 
-// base64url helper
-function base64Url($d){
-    return rtrim(strtr(base64_encode($d), '+/','-_'),'=');
-}
+// Página de configurações
+function spm_v2_render_settings_page() {
+    $settings = wp_parse_args(
+        get_option('spm_v2_settings', []),
+        [
+            'hosts' => [],
+            'security' => [],
+            'default_author' => get_current_user_id(),
+            'use_admin_fallback' => false
+        ]
+    );
+    ?>
+    <div class="wrap">
+        <style>
+            /* Estilos gerais */
+            #spm-hosts {
+                margin: 20px 0;
+            }
 
-// INICIALIZAÇÃO
-add_action('plugins_loaded', function(){
-    new SPM_v2_Core();
+            .host-entry {
+                background: #f8f9fa;
+                border: 1px solid #dee2e6;
+                padding: 15px;
+                margin-bottom: 10px;
+                border-radius: 4px;
+                display: flex;
+                gap: 10px;
+                align-items: center;
+            }
+
+            .host-entry input[type="url"],
+            .host-entry input[type="text"] {
+                flex: 1;
+                min-width: 300px;
+                padding: 8px 12px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+            }
+
+            .remove-host {
+                background: #dc3545;
+                color: white;
+                border: 1px solid #dc3545;
+                padding: 8px 12px;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: all 0.3s ease;
+            }
+
+            .remove-host:hover {
+                background: #bb2d3b;
+                border-color: #b02a37;
+            }
+
+            #add-host {
+                background: #0d6efd;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: background 0.3s ease;
+            }
+
+            #add-host:hover {
+                background: #0b5ed7;
+            }
+
+            /* Responsividade */
+            @media (max-width: 782px) {
+                .host-entry {
+                    flex-direction: column;
+                }
+                
+                .host-entry input {
+                    width: 100% !important;
+                    min-width: unset !important;
+                }
+            }
+
+            /* Mensagens de erro */
+            .error {
+                color: #dc3545;
+                background: #f8d7da;
+                border: 1px solid #f5c6cb;
+                padding: 8px 12px;
+                border-radius: 4px;
+                margin: 10px 0;
+            }
+
+            /* Ajustes na tabela */
+            .form-table th {
+                width: 200px;
+                padding: 20px 10px;
+            }
+
+            .form-table td {
+                padding: 15px 10px;
+            }
+
+            .description {
+                color: #6c757d;
+                font-style: italic;
+                margin-top: 5px;
+                font-size: 0.9em;
+            }
+        </style>
+
+        <h1>Configurações Sync Master</h1>
+        
+        <form method="post" action="options.php">
+            <?php settings_fields('spm_v2_group'); ?>
+            
+            <h2 class="title">Configurações de Segurança</h2>
+            <table class="form-table">
+                <tr>
+                    <th>Segredo JWT</th>
+                    <td>
+                        <input type="text" 
+                               name="spm_v2_settings[security][jwt_secret]" 
+                               value="<?= esc_attr($settings['security']['jwt_secret'] ?? '') ?>" 
+                               class="regular-text" 
+                               required>
+                        <p class="description">Chave secreta para autenticação JWT (mínimo 32 caracteres)</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Forçar SSL</th>
+                    <td>
+                        <label>
+                            <input type="checkbox" 
+                                   name="spm_v2_settings[security][force_ssl]" 
+                                   <?php checked($settings['security']['force_ssl'] ?? false, true); ?>>
+                            Exigir conexões seguras (HTTPS)
+                        </label>
+                    </td>
+                </tr>
+            </table>
+
+            <?php submit_button('Salvar Configurações', 'primary large'); ?>
+        </form>
+
+        <script>
+        jQuery(document).ready(function($) {
+            $('#add-host').click(function() {
+                const newHost = `
+                    <div class="host-entry">
+                        <input type="url" 
+                               name="spm_v2_settings[hosts][][url]" 
+                               placeholder="https://site-exemplo.com" 
+                               required>
+                        <input type="text" 
+                               name="spm_v2_settings[hosts][][secret]" 
+                               placeholder="Chave secreta de autenticação" 
+                               required>
+                        <button type="button" class="button remove-host">Remover</button>
+                    </div>`;
+                $('#spm-hosts').append(newHost);
+            });
+
+            $(document).on('click', '.remove-host', function() {
+                $(this).closest('.host-entry').remove();
+            });
+        });
+        </script>
+    </div>
+    <?php
+}
+// -----------------------------------------
+// FUNCIONALIDADE DE SINCRONIZAÇÃO
+// -----------------------------------------
+add_action('save_post', function($post_id) {
+    if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+    if (wp_is_post_revision($post_id)) return;
+
+    $settings = get_option('spm_v2_settings');
+    if (!$settings['auto_sync']) return;
+
+    $post = get_post($post_id);
+    $author_id = $settings['default_author'];
+
+    // Verificar autor
+    if (!get_user_by('ID', $author_id)) {
+        spmv2_log('Erro: Autor padrão inválido', $author_id);
+        return;
+    }
+
+    // Preparar dados
+    $data = [
+        'title' => $post->post_title,
+        'content' => $post->post_content,
+        'status' => 'publish',
+        'author' => $author_id,
+        'meta' => get_post_meta($post_id)
+    ];
+
+    // Enviar para hosts
+    foreach ($settings['hosts'] as $host) {
+        $response = wp_remote_post($host['url'] . '/wp-json/spm/v2/sync', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . JWT::encode(['exp' => time() + 300], $host['secret'])
+            ],
+            'body' => $data
+        ]);
+
+        // Verificar resposta
+        if (wp_remote_retrieve_response_code($response) === 200) {
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+            if (!$body['success']) {
+                spmv2_log('Erro na sincronização', [
+                    'host' => $host['url'],
+                    'erro' => $body['message']
+                ]);
+            }
+        } else {
+            spmv2_log('Falha na comunicação', [
+                'host' => $host['url'],
+                'codigo' => wp_remote_retrieve_response_code($response)
+            ]);
+        }
+    }
 });
+
+// -----------------------------------------
+// API REST
+// -----------------------------------------
+add_action('rest_api_init', function() {
+    register_rest_route('spm/v2', '/sync', [
+        'methods' => 'POST',
+        'callback' => 'spm_v2_handle_sync',
+        'permission_callback' => 'spm_v2_verify_request'
+    ]);
+});
+
+function spm_v2_verify_request($request) {
+    $settings = get_option('spm_v2_settings');
+    $token = str_replace('Bearer ', '', $request->get_header('Authorization'));
+    
+    try {
+        JWT::decode($token, $settings['security']['jwt_secret']);
+        return true;
+    } catch (Exception $e) {
+        return new WP_Error('auth_error', 'Autenticação inválida', ['status' => 401]);
+    }
+}
+
+function spm_v2_handle_sync($request) {
+
+    
+    $settings = get_option('spm_v2_settings');
+    $data = $request->get_params();
+
+    // Sistema de fallback de autor
+    $author_id = $this->determine_author($data['author'], $settings);
+
+    // Criar post
+    $post_id = wp_insert_post([
+        'post_title'   => sanitize_text_field($data['title']),
+        'post_content' => wp_kses_post($data['content']),
+        'post_status'  => 'publish',
+        'post_author'  => $settings['default_author'],
+        'post_type'    => 'post'
+    ]);
+
+    if (is_wp_error($post_id)) {
+        spmv2_log('Erro ao criar post', $post_id->get_error_messages());
+        return ['success' => false, 'message' => $post_id->get_error_message()];
+    }
+
+    // Adicionar metadados
+    foreach ($data['meta'] as $key => $value) {
+        update_post_meta($post_id, sanitize_key($key), sanitize_meta($key, $value, 'post'));
+    }
+
+    // Forçar atualização de cache
+    clean_post_cache($post_id);
+    flush_rewrite_rules(false);
+
+    return ['success' => true, 'post_id' => $post_id];
+}
+
+private function determine_author($author_data, $settings) {
+    // Tentativa 1: Encontrar pelo ID original
+    if ($user = get_user_by('ID', $author_data['id'])) {
+        return $user->ID;
+    }
+
+    // Tentativa 2: Encontrar pelo username
+    if ($user = get_user_by('login', $author_data['username'])) {
+        return $user->ID;
+    }
+
+    // Tentativa 3: Encontrar pelo email
+    if ($user = get_user_by('email', $author_data['email'])) {
+        return $user->ID;
+    }
+
+    // Fallback 1: Usar autor padrão das configurações
+    if ($user = get_user_by('ID', $settings['default_author'])) {
+        spmv2_log('Usando autor padrão do plugin', $user);
+        return $user->ID;
+    }
+
+    // Fallback 2: Primeiro administrador encontrado
+    $admins = get_users(['role' => 'administrator', 'number' => 1]);
+    if (!empty($admins)) {
+        spmv2_log('Fallback para primeiro admin', $admins[0]);
+        return $admins[0]->ID;
+    }
+
+    // Fallback final: Usuário atual
+    spmv2_log('Fallback para usuário atual', get_current_user_id());
+    return get_current_user_id();
+}
+
+// -----------------------------------------
+// PÁGINA DE LOGS
+// -----------------------------------------
+function spm_v2_render_log_page() {
+    $log_file = WP_CONTENT_DIR . '/spm-v2.log';
+    
+    if (isset($_POST['clear_logs'])) {
+        file_put_contents($log_file, '');
+        echo '<div class="notice notice-success"><p>Logs limpos com sucesso!</p></div>';
+    }
+
+    $logs = file_exists($log_file) ? file_get_contents($log_file) : 'Nenhum log encontrado';
+    ?>
+    <div class="wrap">
+        <h1>Logs de Sincronização</h1>
+        <pre style="background: #1e1e1e; color: #fff; padding: 20px; overflow: auto;"><?= esc_html($logs) ?></pre>
+        <form method="post">
+            <?php submit_button('Limpar Logs', 'delete', 'clear_logs'); ?>
+        </form>
+    </div>
+    <?php
+}
+
+// Classe JWT simplificada (Recomendo usar uma biblioteca oficial em produção)
+class JWT {
+    public static function encode($payload, $secret) {
+        $header = json_encode(['typ' => 'JWT', 'alg' => 'HS256']);
+        $payload = json_encode($payload);
+        $base64 = str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($header) . '.' . base64_encode($payload));
+        $signature = hash_hmac('sha256', $base64, $secret, true);
+        return $base64 . '.' . str_replace(['+', '/', '='], ['-', '_', ''], base64_encode($signature));
+    }
+
+    public static function decode($token, $secret) {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) throw new Exception('Token inválido');
+        
+        $signature = base64_decode(str_replace(['-', '_'], ['+', '/'], $parts[2]));
+        $expected = hash_hmac('sha256', $parts[0] . '.' . $parts[1], $secret, true);
+        
+        if (!hash_equals($signature, $expected)) {
+            throw new Exception('Assinatura inválida');
+        }
+        
+        return json_decode(base64_decode(str_replace(['-', '_'], ['+', '/'], $parts[1])), true);
+    }
+}
