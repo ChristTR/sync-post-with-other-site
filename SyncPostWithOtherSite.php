@@ -444,14 +444,15 @@ function spm_v2_verify_request($request) {
     }
 }
 
+// -----------------------------------------
+// API REST
+// -----------------------------------------
 function spm_v2_handle_sync($request) {
-
-    
     $settings = get_option('spm_v2_settings');
     $data = $request->get_params();
 
-    // Sistema de fallback de autor
-    $author_id = $this->determine_author($data['author'], $settings);
+    // Sistema de fallback de autor (CORREÇÃO AQUI)
+    $author_id = spm_v2_determine_author($data['author'], $settings);
 
     // Criar post
     $post_id = wp_insert_post([
@@ -479,7 +480,8 @@ function spm_v2_handle_sync($request) {
     return ['success' => true, 'post_id' => $post_id];
 }
 
-private function determine_author($author_data, $settings) {
+// FUNÇÃO DE DETERMINAÇÃO DE AUTOR (CORREÇÃO)
+function spm_v2_determine_author($author_data, $settings) {
     // Tentativa 1: Encontrar pelo ID original
     if ($user = get_user_by('ID', $author_data['id'])) {
         return $user->ID;
@@ -512,6 +514,7 @@ private function determine_author($author_data, $settings) {
     spmv2_log('Fallback para usuário atual', get_current_user_id());
     return get_current_user_id();
 }
+
 
 // -----------------------------------------
 // PÁGINA DE LOGS
