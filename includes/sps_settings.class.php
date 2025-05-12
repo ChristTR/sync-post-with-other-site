@@ -1,106 +1,122 @@
 <?php
-if( !class_exists ( 'SPS_Settings' ) ) {
+if ( ! class_exists( 'SPS_Settings' ) ) {
 
     class SPS_Settings {
 
-    	function __construct(){
+        /** Nome da opção onde armazenamos todas as configurações */
+        const OPTION_KEY = 'sps_general_options';
 
-    		add_action( "sps_save_settings", array( $this, "sps_save_settings_func" ), 10 , 1 );
-
-    	}
-
-    	function sps_display_settings( ) {
-    		if( file_exists( SPS_INCLUDES_DIR . "sps_settings.view.php" ) ) {
-    			include_once( SPS_INCLUDES_DIR . "sps_settings.view.php" );
-    		}
-    	}
-
-        function sps_default_setting_option() {
-            return array(
-                'sps_host_name' => array( '0' => '' ),
-                'sps_strict_mode' => array( '0' => '1' ),
-                'sps_content_match' => array( '0' => 'title' ),
-                'sps_content_username' => array( '0' => '' ),
-                'sps_content_password' => array( '0' => '' ),
-                'sps_selected' => array( '0' => ''),
-                'sps_roles_allowed' => array( '0' => array('roles' => array( 'administrator' => 'on', 'editor' => 'on', 'author' => 'on' ) ) )
-            );
+        /** Default: estrutura inicial das configurações */
+        public function sps_default_setting_option() {
+            return [
+                'remote_sites'       => [],    // array de arrays: [ ['url'=>'','label'=>'','username'=>'','app_password'=>''], ... ]
+                'strict_mode'        => '1',
+                'content_match'      => 'title',
+                'roles_allowed'      => [ 'administrator','editor','author' ],
+            ];
         }
 
-    	function sps_save_settings_func( $params = array() ) {
-            $nonce = wp_create_nonce('sps_nonce');
-            if ( ! isset( $_POST['sps_general_option_field'] ) || ! wp_verify_nonce( $_POST['sps_general_option_field'], 'sps_nonce' ) ) {
-                // Nonce verification failed; handle error or exit.
-                wp_die('verification failed. Please try again');
+        /** Construtor: hooks */
+        public function __construct() {
+            // Quando salvar via AJAX ou form padrão
+            add_action( 'admin_post_sps_save_settings', [ $this, 'sps_save_settings_func' ] );
+        }
+
+        /** Exibe a página de opções (view) */
+        public function sps_display_settings() {
+            $options = get_option( self::OPTION_KEY, $this->sps_default_setting_option() );
+            include_once SPS_INCLUDES_DIR . 'sps_settings.view.php';
+        }
+
+        /**
+         * Processa o POST de salvamento das configurações.
+         * Hook: admin_post_sps_save_settings
+         */
+        public function sps_save_settings_func() {
+            // Verifica nonce
+            if ( empty( $_POST['sps_nonce'] ) || ! wp_verify_nonce( $_POST['sps_nonce'], 'sps_save_settings' ) ) {
+                wp_die( __( 'Nonce verification failed', SPS_txt_domain ) );
             }
 
-    		if( isset( $params['sps_setting'] ) && $params['sps_setting'] != '') {
-                $sps_setting = $params['sps_setting'];
-                unset( $params['sps_setting'] );
-    			unset( $params['sps_setting_save'] );
+            // Permissões
+            if ( ! current_user_can( 'manage_options' ) ) {
+                wp_die( __( 'Insufficient permissions', SPS_txt_domain ) );
+            }
 
-                if( isset($params['sps_host_name']) && !empty($params['sps_host_name']) ) {
-                    $hostnames = array();
-                    $usernames = array();
-                    $passwords = array();
-                    foreach ($params['sps_host_name'] as $key => $hostname) {
-                        $hostnames[] = sanitize_url($hostname);
-                        $usernames[] = sanitize_user($params['sps_content_username'][$key]);
-                        $passwords[] = wp_strip_all_tags($params['sps_content_password'][$key]);
+            // Carrega default e sobrescreve com POST
+            $opts = $this->sps_default_setting_option();
+
+            // Captura os campos de sites remotos
+            $sites = [];
+            if ( isset( $_POST['remote_site_url'], $_POST['remote_site_label'], $_POST['remote_site_user'], $_POST['remote_site_pass'] ) ) {
+                $urls      = array_map( 'esc_url_raw',   wp_unslash( $_POST['remote_site_url'] ) );
+                $labels    = array_map( 'sanitize_text_field', wp_unslash( $_POST['remote_site_label'] ) );
+                $users     = array_map( 'sanitize_user',  wp_unslash( $_POST['remote_site_user'] ) );
+                $passwords = array_map( 'sanitize_text_field', wp_unslash( $_POST['remote_site_pass'] ) );
+
+                foreach ( $urls as $i => $url ) {
+                    if ( empty( $url ) ) {
+                        continue;
                     }
-
-                    $params['sps_host_name'] = $hostnames;
-                    $params['sps_content_username'] = $usernames;
-                    $params['sps_content_password'] = $passwords;
-                }
-
-                update_option('sps_setting', $params);
-
-    			$_SESSION['sps_msg_status'] = true;
-    			$_SESSION['sps_msg'] = 'Settings updated successfully.';
-
-    		}
-    	}
-
-        function sps_get_settings_func( ) {
-            $ncm_default_general_option = $this->sps_default_setting_option();
-            $ncm_setting_option = get_option( 'sps_setting' );
-            return shortcode_atts( $ncm_default_general_option, $ncm_setting_option );
-        }
-
-        function sps_get_admin_users( $all_user = false, $fields = 'ID' ) {
-            global $wpdb;
-            $args = array(
-                'role'         => 'Administrator',
-                'orderby'      => 'ID',
-                'order'        => 'ASC',
-                'fields'       => $fields 
-            );
-            $users = get_users( $args );
-            if( $all_user ) {
-                return $users;
-            } else {
-                return $users[0];
-            }
-        }
-
-        function sps_get_post_types() {
-            $all_types = get_post_types();
-            $unset_keys = array( 'attachment', 'revision', 'nav_menu_item', 'custom_css', 'customize_changeset', 'oembed_cache', 'user_request', 'wp_block' );
-
-            foreach ($unset_keys as $uvalue) {
-                if( isset($all_types[$uvalue]) ) {
-                    unset($all_types[$uvalue]);
+                    $sites[] = [
+                        'url'          => $url,
+                        'label'        => $labels[ $i ] ?? $url,
+                        'username'     => $users[ $i ] ?? '',
+                        'app_password' => $passwords[ $i ] ?? '',
+                    ];
                 }
             }
-            return $all_types;
+            $opts['remote_sites'] = $sites;
+
+            // Outros campos
+            $opts['strict_mode']   = isset( $_POST['sps_strict_mode'] ) ? '1' : '0';
+            $opts['content_match'] = sanitize_text_field( $_POST['sps_content_match'] ?? $opts['content_match'] );
+            $opts['roles_allowed'] = array_map( 'sanitize_key', (array) ( $_POST['sps_roles_allowed'] ?? $opts['roles_allowed'] ) );
+
+            // Salva no banco
+            update_option( self::OPTION_KEY, $opts );
+
+            // Redireciona de volta com status
+            wp_redirect( add_query_arg( 'updated', 'true', wp_get_referer() ) );
+            exit;
         }
-       
+
+        /**
+         * Retorna um array $key => ['url','label','username','app_password']
+         * para construir o metabox.
+         */
+        public function get_remote_sites() {
+            $opts = get_option( self::OPTION_KEY, $this->sps_default_setting_option() );
+            $sites = [];
+            foreach ( $opts['remote_sites'] as $key => $site ) {
+                // Garante índices válidos
+                if ( empty( $site['url'] ) ) {
+                    continue;
+                }
+                $sites[ $key ] = [
+                    'url'          => $site['url'],
+                    'label'        => $site['label'] ?? $site['url'],
+                    'username'     => $site['username'] ?? '',
+                    'app_password' => $site['app_password'] ?? '',
+                ];
+            }
+            return $sites;
+        }
+
+        /**
+         * Retorna os detalhes de um site específico pelo índice/chave.
+         * Se não existir, devolve array vazio.
+         *
+         * @param string|int $key
+         * @return array
+         */
+        public function get_remote_site_by_key( $key ) {
+            $sites = $this->get_remote_sites();
+            return isset( $sites[ $key ] ) ? $sites[ $key ] : [];
+        }
     }
 
+    // Inicialização: cria instância global
     global $sps_settings;
     $sps_settings = new SPS_Settings();
-
 }
-
-?>
