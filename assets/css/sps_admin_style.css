@@ -1,34 +1,63 @@
+/* Inputs e selects do admin */
 .sps_input {
-	width: 400px;
+    width: 400px;
 }
 
 .sps_select {
-	width: 500px;
+    width: 500px;
 }
 
-.remove_site {
-	color: #ff0000;
-}
-
+/* Password box (metabox de posts, caso ainda use) */
 .sps_password_box {
-	position: relative;
-	max-width: 400px
+    position: relative;
+    max-width: 400px;
 }
 
 .sps_show_pass,
 .sps_hide_pass {
-	position: absolute;
-	right: 5px;
-	top: 5px;
-	cursor: pointer;
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    cursor: pointer;
 }
 
 .sps_hide_pass {
-	display: none;
+    display: none;
 }
 
-@media screen and (max-width: 768px){
-	.sps_password_box {
-		max-width: inherit;
-	}
+/* Tabela de configurações na página de Settings */
+.widefat.fixed {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.widefat.fixed th,
+.widefat.fixed td {
+    padding: 8px;
+    border: 1px solid #ddd;
+}
+
+/* Botão “Remove” na Settings view */
+button.remove-site {
+    color: #a00;
+    background: none;
+    border: none;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+button.remove-site:hover {
+    color: #c00;
+}
+
+/* Botão “Add New Site” */
+#add-site {
+    margin-bottom: 1em;
+}
+
+/* Responsivo para password box */
+@media screen and (max-width: 768px) {
+    .sps_password_box {
+        max-width: inherit;
+    }
 }
