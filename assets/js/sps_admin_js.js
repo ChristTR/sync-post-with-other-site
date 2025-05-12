@@ -1,40 +1,40 @@
-/**** Add more website *****/
-jQuery(".add_more_site").on("click",function(){
-	var pre_squ = jQuery("#auto_increment").val();
-	var squ = parseInt(pre_squ) + parseInt(1);
-	jQuery("#auto_increment").val(squ);
-	var $clone_html = jQuery("#sps_setting_table").html();
-	var $clone_html_new = $clone_html.replace(/{sps_no}/g, squ);
-	jQuery(".setting-general").append($clone_html_new);
-});
+jQuery(function($){
+    // ===== Adicionar nova linha na tabela de Remote Sites =====
+    $('#add-site').on('click', function(){
+        var $tbody = $('#sps-sites-body');
+        var index  = $tbody.find('tr').length;
+        var row = '<tr>' +
+            '<td><input type="url" name="remote_site_url[]" class="regular-text" required></td>' +
+            '<td><input type="text" name="remote_site_label[]" class="regular-text"></td>' +
+            '<td><input type="text" name="remote_site_user[]" class="regular-text"></td>' +
+            '<td><input type="password" name="remote_site_pass[]" class="regular-text"></td>' +
+            '<td style="text-align:center;"><input type="checkbox" name="remote_site_default[]" value="'+index+'"></td>' +
+            '<td><button type="button" class="remove-site">' + sps_admin_js_params.remove_text + '</button></td>' +
+            '</tr>';
+        $tbody.append(row);
+    });
 
+    // ===== Remover linha de Remote Sites =====
+    $('#sps-sites-body').on('click', '.remove-site', function(){
+        $(this).closest('tr').remove();
+    });
 
-jQuery(document).on("click", ".remove_site", function() {
-	var remove_id = jQuery(this).attr("data-site_id");
-	jQuery(".remove_site_"+remove_id).remove();
-});
+    // ===== Mostrar/ocultar senha (no metabox de posts) =====
+    $(document).on('click', '.sps_show_pass', function() {
+        var $box = $(this).closest('.sps_password_box');
+        $box.find('input').attr('type', 'text');
+        $(this).hide().siblings('.sps_hide_pass').show();
+    });
+    $(document).on('click', '.sps_hide_pass', function() {
+        var $box = $(this).closest('.sps_password_box');
+        $box.find('input').attr('type', 'password');
+        $(this).hide().siblings('.sps_show_pass').show();
+    });
 
-
-/***** hide and show password *****/
-jQuery(document).on("click", ".sps_show_pass", function() {
-	let container = jQuery(this).parents(".sps_password_box");
-	container.find("input").attr("type", "text");
-	jQuery(this).hide();
-	jQuery(this).next().show();
-});
-
-jQuery(document).on("click", ".sps_hide_pass", function() {
-	let container = jQuery(this).parents(".sps_password_box");
-	container.find("input").attr("type", "password");
-	jQuery(this).hide();
-	jQuery(this).prev().show();
-});
-
-
-/***** add website url below username and password field *****/
-jQuery(document).on("keyup", ".sps_url", function() {
-	let url = jQuery(this).val();
-	let table = jQuery(this).parents("table.sps-setting-form");
-	table.find("span.sps_username").text(url);
-	table.find("span.sps_password").text(url);
+    // ===== Atualizar labels de URL abaixo de username/password =====
+    $(document).on('keyup', '.sps_url', function(){
+        var url = $(this).val();
+        var $tbl = $(this).closest('table');
+        $tbl.find('span.sps_username, span.sps_password').text(url);
+    });
 });
