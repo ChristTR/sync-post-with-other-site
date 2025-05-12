@@ -6,6 +6,7 @@ if ( ! class_exists( 'SPS_Post_Meta' ) ) {
         public function __construct() {
             // Registra o metabox
             add_action( 'add_meta_boxes',     [ $this, 'register_sites_metabox' ] );
+            add_action('admin_init', [ $this, 'register_meta_settings' ]);
             // Salva os sites selecionados (prioridade 10)
             add_action( 'save_post',          [ $this, 'save_selected_sites' ], 10, 2 );
             // Dispara a sincronização após salvar metadados (prioridade 20)
