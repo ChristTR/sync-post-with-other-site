@@ -1,495 +1,335 @@
 <?php
-if( !class_exists ( 'SPS_Sync' ) ) {
+if ( ! class_exists( 'SPS_Sync' ) ) {
 
     class SPS_Sync {
-        var $is_website_post = true;
-        var $post_old_title = '';
+        /** Flag para evitar loops */
+        private $is_website_post = true;
+        private $post_old_title = '';
 
-        function __construct(){
-            
-            add_filter( 'wp_insert_post_data' , array( $this, 'filter_post_data') , '99', 2 );
+        public function __construct() {
+            // Captura título antigo antes de salvar
+            add_filter( 'wp_insert_post_data', [ $this, 'filter_post_data' ], 99, 2 );
 
-            // save tags to post for guttenburg because save post not get the tags in guttenburg.
-            add_action( "rest_insert_post", array( $this, "sps_rest_insert_post" ), 10 , 3 );
-            
-            add_action( "save_post", array( $this, "sps_save_post" ), 10 , 3 );
+            // Garante que tags do Gutenberg sejam salvas
+            add_action( 'rest_insert_post', [ $this, 'sps_rest_insert_post' ], 10, 3 );
 
-            add_action( "spsp_after_save_data", array( $this, "spsp_grab_content_images" ), 10, 2 );
+            // Hook principal de salvamento de post
+            add_action( 'save_post', [ $this, 'sps_save_post' ], 10, 3 );
 
-            add_action( 'rest_api_init', array( $this, 'rest_api_init_func' ) ); // Register custom API endpoints
+            // Após sincronizar/remover imagens, puxa imagens hospedadas externamente
+            add_action( 'spsp_after_save_data', [ $this, 'spsp_grab_content_images' ], 10, 2 );
+
+            // Endpoint interno para receber dados via REST
+            add_action( 'rest_api_init', [ $this, 'rest_api_init_func' ] );
         }
 
-
-        function rest_api_init_func() {
-            register_rest_route( 'sps/v1', '/data', array(
-                'methods'  => 'POST',
-                'callback' => array( $this, 'sps_get_request'  ),
-            ) );
+        /**
+         * Registra rota REST para aceitar requisições de sincronização
+         */
+        public function rest_api_init_func() {
+            register_rest_route( 'sps/v1', '/data', [
+                'methods'             => 'POST',
+                'callback'            => [ $this, 'sps_get_request' ],
+                'permission_callback' => '__return_true',
+            ] );
         }
 
-        function filter_post_data( $data , $postarr ) {
-            global $post_old_title;
-            if( isset($postarr['ID']) && !empty($postarr['ID']) ) {
-                $old_data = get_posts( array( 'ID' => $postarr['ID'] ) );
-                if( $old_data && isset($old_data[0]->post_title) && $postarr != $old_data[0]->post_title ) {
-                    $post_old_title = $old_data[0]->post_title; 
-                } 
+        /**
+         * Armazena o título antigo para usar em matching
+         */
+        public function filter_post_data( $data, $postarr ) {
+            if ( ! empty( $postarr['ID'] ) ) {
+                $old = get_post( $postarr['ID'] );
+                if ( $old && isset( $old->post_title ) ) {
+                    $this->post_old_title = $old->post_title;
+                }
             }
-
             return $data;
         }
 
-        function sps_rest_insert_post( $post, $reqest, $creating ) {
-            $json = $reqest->get_json_params();
-            if ( isset( $json['tags'] ) && !empty( $json['tags'] ) ) {
-                $this->sps_save_post( $post->ID, $post, 1, $json['tags'] );
-            }
+        /**
+         * Garante que tags venham no $tagids
+         */
+        public function sps_rest_insert_post( $post, $request, $creating ) {
+            $json   = $request->get_json_params();
+            $tagids = isset( $json['tags'] ) ? $json['tags'] : '';
+            $this->sps_save_post( $post->ID, $post, $creating, $tagids );
         }
 
-        function sps_send_data_to( $action, $args = array(), $sps_website = array() ) {
-            global $wpdb, $sps, $sps_settings, $post_old_title;
-            $general_option = $sps_settings->sps_get_settings_func();
-
-            if( !empty( $general_option ) && isset( $general_option['sps_host_name'] ) && !empty( $general_option['sps_host_name'] ) ) {
-                $response = array();
-                foreach ($general_option['sps_host_name'] as $sps_key => $sps_value) { 
-
-                    $args['sps']['roles'] = isset( $general_option['sps_roles_allowed'][$sps_key]['roles'] ) ? $general_option['sps_roles_allowed'][$sps_key]['roles'] : array();
-                    $args['sps']['host_name']   = !empty( $sps_value ) ? $sps_value : '';
-                    $args['sps']['strict_mode'] = isset( $general_option['sps_strict_mode'][$sps_key] ) ? $general_option['sps_strict_mode'][$sps_key] : 1;
-                    $args['sps']['roles']['administrator'] = 'on';
-
-                    $args['sps']['content_match'] = isset( $general_option['sps_content_match'][$sps_key] ) ? $general_option['sps_content_match'][$sps_key] : 'title';
-                    $args['sps']['content_username'] = isset( $general_option['sps_content_username'][$sps_key] ) ? $general_option['sps_content_username'][$sps_key] : '';
-                    $args['sps']['content_password'] = isset( $general_option['sps_content_password'][$sps_key] ) ? $general_option['sps_content_password'][$sps_key] : '';
-
-                    if( isset($args['post_content']) && isset($args['sps']['strict_mode']) && $args['sps']['strict_mode'] ) {
-                        $args['post_content'] = addslashes($args['post_content']);
-                    } else {
-                        $args['post_content'] = do_shortcode($args['post_content']);
-                    }
-
-                    $loggedin_user_role = wp_get_current_user();
-                    $matched_role = array_intersect( $loggedin_user_role->roles, array_keys( $args['sps']['roles'] ) );
-
-                    if( !empty($sps_value) && !empty($matched_role) && in_array($sps_value, $sps_website) ) {
-                        $response[$sps_key] = $this->sps_remote_post( $action, $args );
-                    }
-                }
-                return $response;
-            }
-        }
-
-        function sps_remote_post( $action, $args = array() ) {
-            do_action( 'spsp_before_send_data', $args );
-            $args = apply_filters( 'spsp_before_send_data_args', $args );
-            $args['sps_action'] = $action;
-            $url = $args['sps']['host_name']."/wp-json/sps/v1/data"; 
-            $return = wp_remote_post( $url, array( 'body' => $args ));
-            return $return;
-        }
-
-        function sps_save_post( $post_ID, $post, $update, $tagids = '' ) {
-            if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) 
+        /**
+         * Envia os dados para todos os sites selecionados
+         */
+        private function sps_send_data_to( $action, $args, $sps_websites ) {
+            if ( empty( $sps_websites ) || ! is_array( $sps_websites ) ) {
                 return;
-
-            $sps_website = isset($_REQUEST['sps_website']) ? $_REQUEST['sps_website'] : array();
-            $status_not = array('auto-draft', 'trash', 'inherit', 'draft');
-            if($this->is_website_post && isset($post->post_status) && !in_array($post->post_status, $status_not) && !empty($sps_website) ) {
-
-                global $wpdb, $sps, $sps_settings, $post_old_title;
-
-                $args = (array) $post;
-            
-                if( !empty($post_old_title) ) {
-                    $args['post_old_title'] = $post_old_title;
-                } else {
-                    $args['post_old_title'] = $args['post_title'];
-                }
-
-                if( has_post_thumbnail($post_ID) ) {
-                   $args['featured_image'] = get_the_post_thumbnail_url($post_ID);
-                }
-
-                if( !empty($post->post_parent) ) {
-                    $args['post_parent_slug'] = get_post_field("post_name", $post->post_parent);
-                }
-
-                $taxonomies = get_object_taxonomies( $args['post_type'] );
-                if( !empty($taxonomies) ) {
-                    $taxonomies_data = array();
-                    foreach ($taxonomies as $taxonomy) {
-                        $taxonomies_data[$taxonomy] = wp_get_post_terms( $post_ID, $taxonomy );
-                    }
-                    $args['taxonomies'] = $taxonomies_data;
-                }
-
-                $post_metas = get_post_meta($post_ID);
-                if( !empty($post_metas) ) {
-                    foreach ( $post_metas as $meta_key => $meta_value ) {
-                        if( $meta_key != 'sps_website' ) {
-                            $args['meta'][$meta_key] = isset($meta_value['0']) ? maybe_unserialize( $meta_value['0'] ) : '';
-                        }
-                    }
-                }
-                
-                $response = $this->sps_send_data_to( 'add_update_post', $args, $sps_website );
-
-                if( is_array($response) ) {
-                    if( isset( $response['response']['code'] ) && $response['response']['code'] == 200 ) {
-                        $other_site_post_id = $response['body'];
-                    }
-                }
             }
-        }
+            global $sps_settings;
 
-        function sps_check_data( $content_mach, $post_data ) {
-
-            global $wpdb;
-
-            $the_slug = $post_data['post_name'];
-            $the_title = isset( $post_data['post_old_title'] ) ? $post_data['post_old_title'] : '';
-
-            $args_title = array(
-              'title'        => $the_title,
-              'post_type'   => $post_data['post_type']
-            );
-            $args_slug = array(
-              'name'        => $the_slug,
-              'post_type'   => $post_data['post_type']
-            );
-          
-            $post_id = '';
-            if($content_mach=="title") {
-                $my_posts = get_posts($args_title);
-                if($my_posts) { 
-                    $post_id = $my_posts[0]->ID; 
+            // Para cada site configurado, se estiver selecionado, envia
+            $return = [];
+            $all_sites = $sps_settings->get_remote_sites();
+            foreach ( $sps_websites as $key ) {
+                if ( ! isset( $all_sites[ $key ] ) ) {
+                    continue;
                 }
-            } else if($content_mach=="title-slug") {
-                $my_posts = get_posts($args_title);
-                if($my_posts) {
-                    $post_id = $my_posts[0]->ID; 
-                } else { 
-                    $my_posts2 = get_posts($args_slug);
-                    if($my_posts2) { 
-                        $post_id = $my_posts2[0]->ID; 
-                    }
-                }
-            } else if($content_mach=="slug") {
-                $my_posts = get_posts($args_slug);
-                if($my_posts) { 
-                    $post_id = $my_posts[0]->ID; 
-                }
-            } else if($content_mach=="slug-title") {
-                $my_posts = get_posts($args_slug);
-                if($my_posts) {
-                    $post_id = $my_posts[0]->ID; 
-                } else {
-                    $my_posts = get_posts($args_title);
-                    if($my_posts) {
-                        $post_id = $my_posts[0]->ID; 
-                    }
+                $site = $all_sites[ $key ];
+                $payload = $args;
+                $payload['sps_action'] = $action;
+                $payload['sps']       = [
+                    'host_name'      => $site['url'],
+                    'content_username' => $site['username'],
+                    'content_password' => $site['app_password'],
+                ];
+                $endpoint = untrailingslashit( $site['url'] ) . '/wp-json/sps/v1/data';
+
+                $response = wp_remote_post( $endpoint, [
+                    'headers' => [
+                        'Content-Type' => 'application/json',
+                    ],
+                    'body'    => wp_json_encode( $payload ),
+                    'timeout' => 20,
+                ] );
+
+                // Armazena na resposta geral
+                $return[ $key ] = $response;
+                // Log de erro caso necessário
+                if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+                    $this->write_log(
+                        sprintf(
+                            "Erro sync [%s]: %s",
+                            $site['url'],
+                            is_wp_error( $response )
+                                ? $response->get_error_message()
+                                : wp_remote_retrieve_body( $response )
+                        ),
+                        'sps_sync_errors.log'
+                    );
                 }
             }
 
-            return $post_id;
-        }
-
-        function grab_image($url,$saveto){
-
-            $data = wp_remote_request( $url );
-            
-            if( isset( $data['body'] ) && isset( $data['response']['code'] ) && !empty( $data['response']['code'] ) ) {
-                $raw = $data['body'];
-                if(file_exists($saveto)){
-                    unlink($saveto);
-                }
-                $fp = fopen($saveto,'x');
-                fwrite($fp, $raw);
-                fclose($fp);
-            }
-        }
-
-        function sps_custom_wpkses_post_tags( $tags, $context ) {
-            if ( 'post' === $context ) {
-                $tags['iframe'] = array(
-                    'src'             => true,
-                    'height'          => true,
-                    'width'           => true,
-                    'frameborder'     => true,
-                    'allowfullscreen' => true,
-                );
-
-                $tags['embed'] = array(
-                    'type'   => true,
-                    'src'    => true,
-                    'height' => true,
-                    'width'  => true,
-                );
-
-                $tags= apply_filters( 'sps_filter_custom_post_tags', $tags );
-            }
-
-            return $tags;
-        }
-
-        function sps_add_update_post( $author, $sps_sync_data ) {
-
-            $return = array();
-            $sps_sync_data['post_author'] = $author->ID;
-            $post_id = $this->sps_check_data( $sps_sync_data['content_match'] , $sps_sync_data );
-            $sps_sync_data['post_content'] = stripslashes($sps_sync_data['post_content']);
-
-            if( !empty($sps_sync_data['post_parent']) && !empty($sps_sync_data['post_parent_slug']) ) {
-                $parent_post_arg = array(
-                  'name'        => $sps_sync_data['post_parent_slug'],
-                  'post_type'   => $sps_sync_data['post_type']
-                );
-
-                $parent_post = get_posts($parent_post_arg);
-                if($parent_post) { 
-                    $sps_sync_data['post_parent'] = $parent_post[0]->ID; 
-                }
-            }
-
-            // For allow some content tags like iframe
-            add_filter( 'wp_kses_allowed_html', array( $this, 'sps_custom_wpkses_post_tags' ) , 10, 2 );
-
-            $post_action = '';
-            if( !empty($post_id) ) {
-                $post_action = 'edit';
-                $sps_sync_data['ID'] = $post_id;
-                $post_id = wp_update_post( $sps_sync_data );
-            } else {
-                $post_action = 'add';
-                $post_id = wp_insert_post( $sps_sync_data );
-            }
-
-            // For remove some content tags like iframe which are allowed above.
-            remove_filter( 'wp_kses_allowed_html', array( $this, 'sps_custom_wpkses_post_tags' ) , 10, 2 );
-
-            if( isset($sps_sync_data['taxonomies']) && !empty($sps_sync_data['taxonomies']) ) {
-                foreach ($sps_sync_data['taxonomies'] as $taxonomy => $texonomy_data) {
-                    if( is_taxonomy_hierarchical( $taxonomy ) ) {
-                        // For hierarchical taxonomy - Categories
-                        if( isset( $texonomy_data ) && !empty( $texonomy_data ) ) {
-                            $post_categories = array();
-                            foreach ( $texonomy_data as $category ) {
-                                $term = term_exists( $category['name'], $taxonomy );
-                                if( $term ) {
-                                    $post_categories[] = $term['term_id'];
-                                } else {
-                                    $tag_temp = wp_insert_term( $category['name'], $taxonomy );
-                                    $tag_id = $tag_temp['term_id'];
-                                    $post_categories[] = $tag_id;
-                                }
-                            }
-                            wp_set_post_terms( $post_id, $post_categories, $taxonomy, false );
-                        } else {
-                            wp_set_post_terms( $post_id );
-                        }
-                    } else {
-                        // For non-hierarchical taxonomy - Tags
-                        if( isset( $texonomy_data ) && !empty( $texonomy_data ) ) {
-                            $post_tags = array();
-                            foreach ( $texonomy_data as $tag ) {
-                                $post_tags[] = $tag['name'];
-                            }
-                            wp_set_post_terms( $post_id, $post_tags, $taxonomy, false );
-                        } else {
-                            wp_set_post_terms( $post_id );
-                        }
-                    }
-                }
-            }
-
-            if( isset($sps_sync_data['meta']) && !empty($sps_sync_data['meta']) ) {
-                foreach ($sps_sync_data['meta'] as $meta_key => $meta_value) {
-                    update_post_meta( $post_id, $meta_key, $meta_value );
-                }
-            }
-
-            if( isset($sps_sync_data['featured_image']) && !empty($sps_sync_data['featured_image']) ) {
-                
-                $image_url        = $sps_sync_data['featured_image'];
-                $image_arr        = explode( '/', $sps_sync_data['featured_image'] );
-                $image_name       = end($image_arr);
-                $upload_dir       = wp_upload_dir();
-                $unique_file_name = wp_unique_filename( $upload_dir['path'], $image_name );
-                $filename         = basename( $unique_file_name );
-
-                // Check folder permission and define file location
-                if( wp_mkdir_p( $upload_dir['path'] ) ) {
-                    $file = $upload_dir['path'] . '/' . $filename;
-                } else {
-                    $file = $upload_dir['basedir'] . '/' . $filename;
-                }
-
-                // Create the image  file on the server
-                $this->grab_image( $image_url, $file);
-
-                // Check image file type
-                $wp_filetype = wp_check_filetype( $filename, null );
-
-                // Set attachment data
-                $attachment = array(
-                    'post_mime_type' => $wp_filetype['type'],
-                    'post_title'     => sanitize_file_name( $filename ),
-                    'post_content'   => '',
-                    'post_status'    => 'inherit'
-                );
-
-                // Create the attachment
-                $attach_id = wp_insert_attachment( $attachment, $file, $post_id );
-
-                // Include image.php
-                require_once(ABSPATH . 'wp-admin/includes/image.php');
-
-                // Define attachment metadata
-                $attach_data = wp_generate_attachment_metadata( $attach_id, $file );
-
-                // Assign metadata to attachment
-                wp_update_attachment_metadata( $attach_id, $attach_data );
-
-                // And finally assign featured image to post
-                $data = set_post_thumbnail( $post_id, $attach_id );
-            }
-
-            do_action( 'spsp_after_save_data', $post_id, $sps_sync_data );
-
-            $return['status'] = __('success', SPS_txt_domain);
-            $return['msg'] = __('Data proccessed successfully', SPS_txt_domain);
-            $return['post_id'] = $post_id;
-            $return['post_action'] = $post_action;
             return $return;
         }
 
-        function sps_get_request( $request ) {
+        /**
+         * Hook save_post: monta $args e dispara sync
+         */
+        public function sps_save_post( $post_ID, $post, $update ) {
+            // Ignora autosaves e revisões
+            if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+                return;
+            }
+            if ( wp_is_post_revision( $post_ID ) ) {
+                return;
+            }
+            // Quais sites foram selecionados no metabox?
+            $sps_websites = isset( $_POST['sps_sites'] ) ? (array) $_POST['sps_sites'] : [];
+            if ( empty( $sps_websites ) ) {
+                return;
+            }
 
-            $sps_sync_data = $request->get_params();
-            if( isset($sps_sync_data['sps_action']) && !empty($sps_sync_data['sps_action']) ) {
-                $this->is_website_post = false;
-                
-                $sps_host_name        = isset($sps_sync_data['sps']['host_name']) ? esc_url_raw($sps_sync_data['sps']['host_name']) : '';
-                $sps_content_username = isset($sps_sync_data['sps']['content_username']) ? sanitize_text_field($sps_sync_data['sps']['content_username']) : '';
-                $sps_content_password = isset($sps_sync_data['sps']['content_password']) ? sanitize_text_field($sps_sync_data['sps']['content_password']) : '';
-                $sps_strict_mode      = isset($sps_sync_data['sps']['strict_mode']) ? sanitize_text_field($sps_sync_data['sps']['strict_mode']) : '';
-                $sps_content_match    = isset($sps_sync_data['sps']['content_match']) ? sanitize_text_field($sps_sync_data['sps']['content_match']) : '';
-                $sps_roles            = isset($sps_sync_data['sps']['roles']) ? sanitize_text_field($sps_sync_data['sps']['roles']) : '';
-                $sps_action           = isset($sps_sync_data['sps_action']) ? 'sps_'.sanitize_text_field($sps_sync_data['sps_action']) : '';
-                unset($sps_sync_data['sps']);
+            // Monta payload básico
+            $args = [
+                'ID'           => $post_ID,
+                'post_title'   => get_the_title( $post_ID ),
+                'post_content' => apply_filters( 'the_content', $post->post_content ),
+                'post_author'  => $post->post_author,
+                'post_type'    => $post->post_type,
+            ];
 
-                $return = array();
-                if( !empty($sps_content_username) && !empty($sps_content_password) ) {
-                    $author = wp_authenticate( $sps_content_username, $sps_content_password );
-                    if( isset($author->ID) && !empty($author->ID) ) {
+            // Antigo título para matching
+            $args['post_old_title'] = $this->post_old_title ?: $args['post_title'];
 
-                        unset($sps_sync_data['sps']);
-                        unset($sps_sync_data['sps_action']);
+            // Featured image
+            if ( has_post_thumbnail( $post_ID ) ) {
+                $args['featured_image'] = get_the_post_thumbnail_url( $post_ID, 'full' );
+            }
 
-                        if( isset($sps_sync_data['ID']) ) {
-                            unset($sps_sync_data['ID']);
-                        }
-
-                        if( $sps_action == 'sps_authenticate' ) {
-                            $return['status'] = __('success', SPS_txt_domain);
-                            $return['msg'] = __('Authenitcate successfully.', SPS_txt_domain);
-                        } else {
-                            if( ( $sps_sync_data['post_type'] == 'page' && $author->has_cap('edit_pages') ) || $author->has_cap('edit_posts') ) {
-                                $sps_sync_data['content_match'] = $sps_content_match;
-                                $return = call_user_func( array( $this, $sps_action ), $author, $sps_sync_data );
-                            } else {
-                                $return['status'] = __('success', SPS_txt_domain);
-                                $return['msg'] = __('You do not have permission to do the action.', SPS_txt_domain);
-                            }
-                        }
-                    } else {
-                        $return['status'] = __('failed', SPS_txt_domain);
-                        $return['msg'] = __('Authenitcate failed.', SPS_txt_domain);
-                    }
-                } else {
-                    $return['status'] = __('failed', SPS_txt_domain);
-                    $return['msg'] = __('Username or Password is null.', SPS_txt_domain);
+            // Taxonomias
+            $taxes = get_object_taxonomies( $post->post_type );
+            if ( $taxes ) {
+                $args['taxonomies'] = [];
+                foreach ( $taxes as $tax ) {
+                    $args['taxonomies'][ $tax ] = wp_get_post_terms( $post_ID, $tax, [ 'fields' => 'all' ] );
                 }
-                
-                return new WP_REST_Response( $return, 200 );
+            }
+
+            // Metadados (exceto _sps_sites)
+            $all_meta = get_post_meta( $post_ID );
+            unset( $all_meta['_sps_sites'] );
+            $args['meta'] = [];
+            foreach ( $all_meta as $m_key => $m_val ) {
+                $args['meta'][ $m_key ] = maybe_unserialize( $m_val[0] );
+            }
+
+            // Dispara envio
+            $this->sps_send_data_to( 'add_update_post', $args, $sps_websites );
+        }
+
+        /**
+         * Grava no diretório `log/` dentro do plugin
+         */
+        private function write_log( $message, $file = 'sps_log.txt' ) {
+            $dir = __DIR__ . '/log/';
+            if ( ! file_exists( $dir ) ) {
+                wp_mkdir_p( $dir );
+            }
+            $line = date( 'Y-m-d H:i:s' ) . " - {$message}\n";
+            file_put_contents( $dir . $file, $line, FILE_APPEND | LOCK_EX );
+        }
+
+        /**
+         * Recebe requisições REST vindas de outros sites
+         */
+        public function sps_get_request( WP_REST_Request $request ) {
+            $data = $request->get_json_params();
+            $action = isset( $data['sps_action'] ) ? $data['sps_action'] : '';
+
+            // Autentica usuário remoto
+            $user = wp_authenticate( $data['sps']['content_username'], $data['sps']['content_password'] );
+            if ( is_wp_error( $user ) || ! isset( $user->ID ) ) {
+                return new WP_REST_Response( [ 'status' => 'failed', 'msg' => 'Auth failed' ], 200 );
+            }
+
+            // Evita loop de envio
+            $this->is_website_post = false;
+
+            // Remove campos de autenticação antes de processar
+            unset( $data['sps'], $data['sps_action'] );
+
+            // Rota a ação para o método interno `sps_add_update_post`
+            if ( method_exists( $this, 'sps_' . $action ) ) {
+                return call_user_func( [ $this, 'sps_' . $action ], $user, $data );
+            }
+
+            return new WP_REST_Response( [ 'status' => 'failed', 'msg' => 'Unknown action' ], 200 );
+        }
+
+        /**
+         * Adiciona ou edita post recebido remotamente
+         */
+        public function sps_add_update_post( $author, $data ) {
+            // Permissões
+            if ( ! $author->has_cap( 'edit_posts' ) && ( $data['post_type'] === 'page' && ! $author->has_cap( 'edit_pages' ) ) ) {
+                return new WP_REST_Response( [ 'status' => 'failed', 'msg' => 'No permission' ], 200 );
+            }
+
+            // Matching por slug ou título
+            $match = isset( $data['content_match'] ) ? $data['content_match'] : 'title';
+            $existing_id = $this->find_existing_post( $data, $match );
+
+            // Insere ou atualiza
+            if ( $existing_id ) {
+                $data['ID'] = $existing_id;
+                $new_id = wp_update_post( $data );
+                $action = 'edit';
+            } else {
+                $new_id = wp_insert_post( $data );
+                $action = 'add';
+            }
+
+            // Processa taxonomias, metas, imagem destacada, etc.
+            $this->process_post_details( $new_id, $data );
+
+            return new WP_REST_Response( [
+                'status'    => 'success',
+                'post_id'   => $new_id,
+                'post_action' => $action
+            ], 200 );
+        }
+
+        /**
+         * Busca post existente por slug/título
+         */
+        private function find_existing_post( $data, $match ) {
+            $args = [
+                'post_type'  => $data['post_type'],
+                'post_status'=> 'any',
+                'numberposts'=> 1,
+            ];
+            if ( $match === 'slug' ) {
+                $args['name'] = $data['post_name'] ?? '';
+            } else {
+                $args['title'] = $data['post_old_title'] ?? $data['post_title'];
+            }
+            $found = get_posts( $args );
+            return $found ? $found[0]->ID : 0;
+        }
+
+        /**
+         * Processa taxonomias, metas e featured image para o post sincronizado
+         */
+        private function process_post_details( $post_id, $data ) {
+            // Taxonomias
+            if ( ! empty( $data['taxonomies'] ) ) {
+                foreach ( $data['taxonomies'] as $tax => $terms ) {
+                    if ( is_taxonomy_hierarchical( $tax ) ) {
+                        $ids = [];
+                        foreach ( $terms as $t ) {
+                            $term_obj = term_exists( $t->name, $tax );
+                            if ( ! $term_obj ) {
+                                $term_obj = wp_insert_term( $t->name, $tax );
+                            }
+                            $ids[] = is_array( $term_obj ) ? $term_obj['term_id'] : $term_obj;
+                        }
+                        wp_set_post_terms( $post_id, $ids, $tax );
+                    } else {
+                        $names = wp_list_pluck( $terms, 'name' );
+                        wp_set_post_terms( $post_id, $names, $tax );
+                    }
+                }
+            }
+
+            // Metadados
+            if ( ! empty( $data['meta'] ) ) {
+                foreach ( $data['meta'] as $m_key => $m_val ) {
+                    update_post_meta( $post_id, $m_key, maybe_unserialize( $m_val ) );
+                }
+            }
+
+            // Featured image
+            if ( ! empty( $data['featured_image'] ) ) {
+                $this->import_featured_image( $data['featured_image'], $post_id );
             }
         }
 
-        function spsp_grab_content_images( $post_id, $sps_sync_data ) {
-            $post_content = stripslashes($sps_sync_data['post_content']);
-            preg_match_all('/<img[^>]+>/i', $post_content, $images_tag);
+        /**
+         * Importa imagem externa como featured image
+         */
+        private function import_featured_image( $url, $post_id ) {
+            $tmp = download_url( $url );
+            if ( is_wp_error( $tmp ) ) {
+                return;
+            }
+            $file_array = [
+                'name'     => basename( $url ),
+                'tmp_name' => $tmp,
+            ];
+            $id = media_handle_sideload( $file_array, $post_id );
+            if ( is_wp_error( $id ) ) {
+                @unlink( $tmp );
+                return;
+            }
+            set_post_thumbnail( $post_id, $id );
+        }
 
-            if( isset($images_tag[0]) && !empty($images_tag[0]) ) {
-                foreach ($images_tag[0] as $img_tag) {
-                    preg_match_all('/(alt|title|src)=("[^"]*")/i', $img_tag, $img_data);
-                    if( isset($img_data[2][0]) && !empty($img_data[2][0]) && isset($img_data[1][0]) && $img_data[1][0] == 'src' ) {
-                        $image_url = str_replace( '"', '', $img_data[2][0] );
-
-                        // check image is exists
-                        $args = array(
-                            'post_type' => 'attachment',
-                            'post_status' => 'inherit',
-                            'meta_query' => array(
-                                array(
-                                    'key'       => 'old_site_url',
-                                    'value'     => $image_url,
-                                    'compare'   => '='
-                                ),
-                            ),
-                        );
-
-                        $attachment = new WP_Query( $args );
-
-                        if( empty($attachment->posts) ) {
-
-                            $image_arr        = explode( '/', $image_url );
-                            $image_name       = end($image_arr);
-                            $upload_dir       = wp_upload_dir();
-                            $unique_file_name = wp_unique_filename( $upload_dir['path'], $image_name );
-                            $filename         = basename( $unique_file_name );
-
-                            // Check folder permission and define file location
-                            if( wp_mkdir_p( $upload_dir['path'] ) ) {
-                                $file = $upload_dir['path'] . '/' . $filename;
-                            } else {
-                                $file = $upload_dir['basedir'] . '/' . $filename;
-                            }
-
-                            // Create the image  file on the server
-                            $this->grab_image( $image_url, $file);
-
-                            // Check image file type
-                            $wp_filetype = wp_check_filetype( $filename, null );
-
-                            // Set attachment data
-                            $attachment = array(
-                                'post_mime_type' => $wp_filetype['type'],
-                                'post_title'     => sanitize_file_name( $filename ),
-                                'post_content'   => $image_url,
-                                'post_status'    => 'inherit'
-                            );
-                            
-                            $attach_id = wp_insert_attachment( $attachment, $file, $post_id );
-                            update_post_meta( $attach_id, 'old_site_url', $image_url );
-                        } else {
-                            $attachment_posts = $attachment->posts;
-                            $attach_id = $attachment_posts[0]->ID;
-                        }
-
-                        $new_image_url = wp_get_attachment_url( $attach_id );
-                        $post_content = str_replace($image_url, $new_image_url, $post_content);
-                    }
-                }
-                
-                wp_update_post( array( 'ID' => $post_id, 'post_content' => $post_content ) );
+        /**
+         * Extrai todas as <img> de conteúdo e faz sideload
+         */
+        public function spsp_grab_content_images( $post_id, $data ) {
+            if ( empty( $data['post_content'] ) ) {
+                return;
+            }
+            preg_match_all( '/<img[^>]+src=["\']([^"\']+)["\']/i', stripslashes( $data['post_content'] ), $matches );
+            if ( empty( $matches[1] ) ) {
+                return;
+            }
+            foreach ( $matches[1] as $src ) {
+                $this->import_featured_image( $src, $post_id );
             }
         }
     }
 
-    global $sps_sync, $post_old_title;
+    // Inicializa
+    global $sps_sync;
     $sps_sync = new SPS_Sync();
-
 }
-
-?>
