@@ -1,7 +1,7 @@
 <?php 
-if (!class_exists('spsv2_Post_Meta')) {
+if (!class_exists('SPS_Post_Meta')) {
 
-    class spsv2_Post_Meta {
+    class SPS_Post_Meta {
 
         function __construct() {
             
@@ -14,14 +14,15 @@ if (!class_exists('spsv2_Post_Meta')) {
         function register_meta_settings()
         {
             global $sps_settings;
-add_meta_box(
-    'spsv2_websites',
-    __('Sites de Sincronização v2', SPSV2_txt_domain),
-    array($this, 'spsv2_render_meta_box'),
-    $this->get_supported_post_types(), // Novo método interno
-    'side',
-    'default'
-);
+            add_meta_box(
+                'sps_websites', 
+                __('Select Websites', 'SPS_txt_domain'), 
+                array( $this, 'print_meta_fields' ), 
+                $sps_settings->sps_get_post_types(), 
+                'side', 
+                'default'
+            );
+        }
         
         public function print_meta_fields()
         {
@@ -66,16 +67,11 @@ add_meta_box(
                 update_post_meta($post_id, 'sps_website', $sps_websites);
             }
         }
-
-             private function get_supported_post_types() {
-        $excluded = ['attachment', 'revision', 'nav_menu_item'];
-        return array_diff(get_post_types(['public' => true]), $excluded);
-    }
         
     }
 
-    global $spsv2_Post_Meta;
-    $spsv2_Post_Meta = new spsv2_Post_Meta();
+    global $sps_post_meta;
+    $sps_post_meta = new SPS_Post_Meta();
 }
 
 
