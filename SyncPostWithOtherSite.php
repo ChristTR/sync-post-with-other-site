@@ -18,11 +18,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Definições de diretórios e URLs
 define( 'SPS_PLUGIN', '/sync-post-with-other-site/' );
 define( 'SPS_PLUGIN_DIR', WP_PLUGIN_DIR . SPS_PLUGIN );
+define( 'SPS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SPS_INCLUDES_DIR', SPS_PLUGIN_DIR . 'includes/' );
-define( 'SPS_ASSETS_URL', WP_PLUGIN_URL . SPS_PLUGIN . 'assets/' );
+define( 'SPS_ASSETS_URL', plugin_dir_url( __FILE__ ) . 'assets/' );
 define( 'SPS_JS_URL', SPS_ASSETS_URL . 'js/' );
 define( 'SPS_CSS_URL', SPS_ASSETS_URL . 'css/' );
 define( 'SPS_txt_domain', 'sps_text_domain' );
+
 
 // Versão do plugin
 global $sps_version;
@@ -105,19 +107,22 @@ class SyncPostWithOtherSite {
     /**
      * Registra o endpoint REST /wp-json/sync/v1/post
      */
-    public function register_sync_endpoint() {
-        register_rest_route(
-            'sync/v1',
-            '/post',
-            [
-                'methods'             => WP_REST_Server::CREATABLE,
-                'callback'            => [ $this, 'handle_remote_post' ],
-                'permission_callback' => function( $request ) {
-                    return current_user_can( 'edit_posts' );
-                },
-            ]
-        ); // :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-    }
+public function register_sync_endpoint() {
+    register_rest_route(
+        'sync/v1',
+        '/post',
+        [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [ $this, 'handle_remote_post' ],
+            'permission_callback' => function( $request ) {
+                return current_user_can( 'edit_posts' );
+            },
+        ]
+    );
+
+    // Log personalizado usando a função do plugin
+    $this->sps_write_log('Endpoint /wp-json/sync/v1/post registrado com sucesso');
+}
 
     /**
      * Callback para processar criação de post remoto
@@ -165,15 +170,20 @@ class SyncPostWithOtherSite {
 
         return json_decode( wp_remote_retrieve_body( $response ), true );
     }
-
-    function sps_write_log( $content = '', $file_name = 'sps_log.txt' ) {
-        $path = __DIR__ . '/log/';
-        if ( ! file_exists( $path ) ) {
-            wp_mkdir_p( $path );
-        }
-        file_put_contents( $path . $file_name, date( 'Y-m-d H:i:s' ) . " – " . $content . "\n", FILE_APPEND | LOCK_EX );
-    }
 }
 
+function sps_write_log( $content = '', $file_name = 'sps_log.txt' ) {
+    $upload_dir = wp_upload_dir();
+    $log_dir    = trailingslashit( $upload_dir['basedir'] ) . 'sps-logs/';
+
+    if ( ! file_exists( $log_dir ) ) {
+        wp_mkdir_p( $log_dir );
+    }
+
+    $log_file = $log_dir . $file_name;
+    $log_line = date( 'Y-m-d H:i:s' ) . ' - ' . $content . "\n";
+
+    file_put_contents( $log_file, $log_line, FILE_APPEND | LOCK_EX );
+}
 // Inicialização
 new SyncPostWithOtherSite();
