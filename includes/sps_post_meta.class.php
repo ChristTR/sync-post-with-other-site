@@ -1,80 +1,139 @@
-<?php 
-if (!class_exists('SPS_Post_Meta')) {
+<?php
+if ( ! class_exists( 'SPS_Post_Meta' ) ) {
 
     class SPS_Post_Meta {
 
-        function __construct() {
-            
-            add_action('admin_init', array( $this, 'register_meta_settings' ) );
-                
-            add_action('save_post', array( $this, 'save_meta_fields' ) );
-                   
+        public function __construct() {
+            // Registra o metabox
+            add_action( 'add_meta_boxes',     [ $this, 'register_sites_metabox' ] );
+            // Salva os sites selecionados (prioridade 10)
+            add_action( 'save_post',          [ $this, 'save_selected_sites' ], 10, 2 );
+            // Dispara a sincronização após salvar metadados (prioridade 20)
+            add_action( 'save_post',          [ $this, 'maybe_sync_post' ], 20, 2 );
         }
 
-        function register_meta_settings()
-        {
+        /**
+         * Registra o metabox “Select Websites” na tela de edição de post.
+         */
+        public function register_sites_metabox() {
             global $sps_settings;
+            $post_types = method_exists( $sps_settings, 'sps_get_post_types' )
+                ? $sps_settings->sps_get_post_types()
+                : [ 'post' ];
+
             add_meta_box(
-                'sps_websites', 
-                __('Select Websites', 'SPS_txt_domain'), 
-                array( $this, 'print_meta_fields' ), 
-                $sps_settings->sps_get_post_types(), 
-                'side', 
+                'sps_websites',
+                __( 'Select Websites', SPS_txt_domain ),
+                [ $this, 'print_meta_fields' ],
+                $post_types,
+                'side',
                 'default'
             );
         }
-        
-        public function print_meta_fields()
-        {
-            global $wpdb, $sps_settings, $post;
-            $general_option = $sps_settings->sps_get_settings_func();
 
-            echo '<div class="drop_meta_container">';
-            echo '<div class="drop_meta_item fullwidth">';
-            echo '<div class="inner_meta">';
-                
-            if( !empty( $general_option ) && isset( $general_option['sps_host_name'] ) && !empty( $general_option['sps_host_name'] ) ) {
-                $sps_website = get_post_meta($post->ID, 'sps_website', false);
-                $old_meta = ( isset($sps_website['0']) && !empty($sps_website['0']) ) ? $sps_website['0'] : array();
-                $sps_selected = ( isset($general_option['sps_selected']) && !empty($general_option['sps_selected']) ) ? $general_option['sps_selected'] : array();
+        /**
+         * Imprime os checkboxes com os sites disponíveis.
+         */
+        public function print_meta_fields( WP_Post $post ) {
+            global $sps_settings;
+            // Obtém lista de sites configurados no plugin (ex.: option ou método próprio)
+            $sites = method_exists( $sps_settings, 'get_remote_sites' )
+                ? $sps_settings->get_remote_sites()
+                : get_option( 'sps_remote_sites', [] );
 
-                foreach ($general_option['sps_host_name'] as $sps_key => $sps_value) {
-                    $checked = (in_array($sps_value, $old_meta)) ? 'checked="checked"' : '';
-                    $checked = ( isset( $sps_selected[$sps_key] ) && !empty($sps_selected[$sps_key]) ) ? 'checked="checked"' : '';
+            // Sites selecionados neste post
+            $selected = get_post_meta( $post->ID, '_sps_sites', true );
+            if ( ! is_array( $selected ) ) {
+                $selected = [];
+            }
 
-                    echo '<input type="checkbox" name="sps_website[]" id="sps_website_'.$sps_key.'" value="'.$sps_value.'" '.$checked.'>';
-                    echo '<label for="sps_website_'.$sps_key.'">'.$sps_value.'</label>';
-                    echo '<br/>';
-                }
+            // Nonce para segurança
+            wp_nonce_field( 'sps_save_sites', 'sps_sites_nonce' );
+
+            echo '<div class="sps-sites-list">';
+            if ( empty( $sites ) ) {
+                echo '<p>' . esc_html__( 'No remote sites configured.', SPS_txt_domain ) . '</p>';
             } else {
-                _e( 'Please add website in <b>Sync Post</b>. So you can select the website for sync post.', SPS_txt_domain );
-                echo "<br/>";
-            }
-
-            echo "<br/>";
-            echo '<div class="meta_description"><p>' . __('select which website you want to add/edit post with this post.',SPS_txt_domain) . '</p></div>';
-            echo '</div><!-- end inner -->';
-            echo '</div><!-- end single meta -->';
-            echo '</div><!-- end meta container --><br />';
-        }
-
-        function save_meta_fields( $post_id ) {
-            if( isset($_REQUEST['sps_website']) && !empty($_REQUEST['sps_website']) ) {
-                $sps_websites = array();
-                foreach( $_REQUEST['sps_website'] as $sps_webkey => $sps_webvalue ) {
-                    $sps_websites[$sps_webkey] = esc_url_raw($sps_webvalue);
+                foreach ( $sites as $key => $site ) {
+                    $label   = isset( $site['label'] ) ? $site['label'] : $site['url'];
+                    $checked = in_array( $key, $selected, true ) ? 'checked' : '';
+                    printf(
+                        '<p><label><input type="checkbox" name="sps_sites[]" value="%s" %s> %s</label></p>',
+                        esc_attr( $key ),
+                        $checked,
+                        esc_html( $label )
+                    );
                 }
-                update_post_meta($post_id, 'sps_website', $sps_websites);
+            }
+            echo '</div>';
+        }
+
+        /**
+         * Salva os sites selecionados no post meta.
+         */
+        public function save_selected_sites( $post_id, $post ) {
+            // Verifica nonce
+            if ( empty( $_POST['sps_sites_nonce'] ) ||
+                 ! wp_verify_nonce( $_POST['sps_sites_nonce'], 'sps_save_sites' )
+            ) {
+                return;
+            }
+            // Evita autosave/revisão
+            if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+                return;
+            }
+            // Permissão de edição
+            if ( ! current_user_can( 'edit_post', $post_id ) ) {
+                return;
+            }
+            // Leia e sanitize
+            $sites = isset( $_POST['sps_sites'] ) && is_array( $_POST['sps_sites'] )
+                ? array_map( 'sanitize_text_field', wp_unslash( $_POST['sps_sites'] ) )
+                : [];
+            update_post_meta( $post_id, '_sps_sites', $sites );
+        }
+
+        /**
+         * Após salvar o post, verifica sites selecionados e sincroniza.
+         */
+        public function maybe_sync_post( $post_id, $post ) {
+            // Não para revisões
+            if ( wp_is_post_revision( $post_id ) ) {
+                return;
+            }
+            // Obtém os sites escolhidos
+            $sites = get_post_meta( $post_id, '_sps_sites', true );
+            if ( empty( $sites ) || ! is_array( $sites ) ) {
+                return;
+            }
+            // Garante que seu plugin principal está carregado
+            if ( ! class_exists( 'SyncPostWithOtherSite' ) ) {
+                return;
+            }
+            $main = SyncPostWithOtherSite::instance(); // supondo método singleton
+            // Monta payload
+            $payload = [
+                'title'   => get_the_title( $post_id ),
+                'content' => apply_filters( 'the_content', $post->post_content ),
+                'author'  => intval( $post->post_author ),
+                'id'      => $post_id,
+            ];
+            // Envia para cada site selecionado
+            foreach ( $sites as $key ) {
+                $remote = $main->get_remote_site_by_key( $key ); 
+                if ( empty( $remote['url'] ) || empty( $remote['username'] ) || empty( $remote['app_password'] ) ) {
+                    continue;
+                }
+                $main->send_post_to_remote(
+                    $payload,
+                    $remote['url'],
+                    $remote['username'],
+                    $remote['app_password']
+                );
             }
         }
-        
     }
 
-    global $sps_post_meta;
-    $sps_post_meta = new SPS_Post_Meta();
+    // Inicializa a classe
+    new SPS_Post_Meta();
 }
-
-
-
-
-?>
